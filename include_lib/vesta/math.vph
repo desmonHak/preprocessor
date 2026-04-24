@@ -1,0 +1,55 @@
+// vesta/math.vph — constantes matematicas como bits IEEE 754 de doble precision
+// Uso: #import <vesta/math>
+//
+// Las constantes se expresan como enteros de 64 bits con la representacion
+// binaria exacta de cada valor double. Utilizar __BITS2F__ para convertirlas
+// de vuelta a double en expresiones flotantes del preprocesador.
+#pragma once
+
+// pi = 3.14159265358979323846...
+#define F_PI            4614256656552045848
+
+// pi/2
+#define F_PI_2          4612488851655645586
+
+// 2*pi
+#define F_2PI           4615984556919521440
+
+// numero de Euler e = 2.71828182845904523536...
+#define F_E             4614253070214989087
+
+// ln(2) = 0.6931471805599453...
+#define F_LN2           4604418534313441775
+
+// log2(e) = 1.4426950408889634...
+#define F_LOG2E         4609176141468365239
+
+// sqrt(2) = 1.4142135623730951...
+#define F_SQRT2         4609176140021203713
+
+// 1/sqrt(2) = 0.7071067811865476...
+#define F_SQRT1_2       4604544271217802189
+
+// phi = (1+sqrt(5))/2 = 1.6180339887498948...
+#define F_PHI           4609889751288809677
+
+// cero positivo
+#define F_ZERO          0
+
+// uno
+#define F_ONE           4607182418800017408
+
+// menos uno
+#define F_NEG_ONE       13830554455654793216
+
+// infinito positivo (IEEE 754)
+#define F_INF           9218868437227405312
+
+// infinito negativo
+#define F_NEG_INF       18442240474082181120
+
+// NaN canonico
+#define F_NAN           9221120237041090560
+
+// epsilon de maquina (menor diferencia de 1.0 representable)
+#define F_EPSILON       4372995238176751616

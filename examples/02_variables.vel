@@ -1,0 +1,61 @@
+// Ejemplo 02: Variables con #set
+// Demuestra asignacion simple, operadores compuestos e incremento/decremento.
+
+// contador de slots de una tabla
+#set SLOT_COUNT = 0
+
+// construir 8 slots con IDs autoincrementales
+#array SLOTS (slot0, slot1, slot2, slot3, slot4, slot5, slot6, slot7)
+
+// mascara de bits activos: encender bits 0, 2 y 4
+#set MASK = 0
+#set MASK |= 0x01
+#set MASK |= 0x04
+#set MASK |= 0x10
+// MASK = 0x15 = 21
+
+// tamano de buffer: 16 * 4 = 64 bytes
+#set BUF_SIZE = 16
+#set BUF_SIZE *= 4
+
+@Format("velb")
+
+@SpaceAddress {
+    @Name("anonymous"),
+    @IniAddress(0x0000000000000000),
+    @EndAddress(0xFFFFFFFFFFFFFFFF)
+}
+
+@Section {
+    @Name("all"),
+    @SpaceAddress("anonymous")
+}
+
+code:
+    @InitPc(code)
+
+    // cargar mascara calculada en preprocesado
+    mov r0, MASK           // r0 = 21 (0x15)
+
+    // cargar tamano de buffer
+    mov r1, BUF_SIZE       // r1 = 64
+
+    // verificar slot count
+    mov r2, __ARRAY_SIZE__(SLOTS)  // r2 = 8
+
+    hlt
+end_code:
+
+align 16
+data:
+    // tabla de slots: offset = indice * 4
+    #set SLOT_COUNT = 0
+    #foreach SLOT in SLOTS
+        SLOT  dw SLOT_COUNT * 4
+        #set SLOT_COUNT++
+    #endforeach
+
+    enabled_mask dw MASK
+    buf_size     dw BUF_SIZE
+    total_slots  dw __ARRAY_SIZE__(SLOTS)
+end_data:

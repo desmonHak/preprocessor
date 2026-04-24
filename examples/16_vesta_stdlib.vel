@@ -1,0 +1,119 @@
+// Ejemplo 16: stdlib vpp — #import <vesta>
+//
+// Muestra como la stdlib elimina los magic numbers y strings literales
+// repetidos del codigo. Comparacion directa entre el estilo antiguo y
+// el estilo con stdlib:
+//
+//  SIN stdlib:                          CON stdlib:
+//  --------------------------------     --------------------------------
+//  mov r15, 3                           mov REG_ARGC, 3
+//  mov r1,  r14                         mov REG_ARG1, REG_PROC
+//  calln @Method("stdlib/native/       calln @Method(METHOD_PRINTLN)
+//    io/vesta_io:vio_println")
+//  db "...", 0x00                       db "...", CHAR_NUL
+//  mov r15, 1                           mov REG_ARGC, 1
+//  db OS_NAME, 0x00                     // OS_NAME = "Windows"/"Linux"/"macOS"
+
+#import <vesta/registers>   // REG_RET, REG_ARG1..3, REG_PROC, REG_ARGC, NUM_REGS
+#import <vesta/io>          // LIB_IO, METHOD_PRINTLN, METHOD_PRINT_INT, CHAR_NUL, etc.
+#import <vesta/types>       // SIZEOF_QWORD, UINT32_MAX, INT64_MAX, MASK32, etc.
+#import <vesta/platform>    // OS_NAME, ARCH_NAME, ARCH_BITS, PATH_SEP, DLL_EXT, etc.
+
+// --- verificaciones de invariantes con los tipos importados ---
+#assert SIZEOF_QWORD == 8               "tamano de qword debe ser 8 bytes"
+#assert ARCH_BITS == 64                 "se requiere arquitectura de 64 bits"
+#assert NUM_REGS == 16                  "la VM Vesta tiene 16 registros"
+
+// --- constantes de la aplicacion ---
+#define APP_NAME        "VestaStdlib Demo"
+#define APP_NAME_LEN    __STRLEN__(APP_NAME)
+
+// tabla de informacion del entorno de ejecucion
+#array ENV_KEYS   (OS, Arch, Bits, Regs, PtrSize)
+#array ENV_VALS   (OS_NAME, ARCH_NAME, ARCH_BITS, NUM_REGS, SIZEOF_PTR)
+
+@Format("velb")
+
+@SpaceAddress {
+    @Name("anonymous"),
+    @IniAddress(0x0000000000000000),
+    @EndAddress(0xFFFFFFFFFFFFFFFF)
+}
+
+@Section {
+    @Name("all"),
+    @SpaceAddress("anonymous")
+}
+
+// @Import usa LIB_IO y FN_* importados de vesta/io.vph
+@Import {
+    @Method { @Lib(LIB_IO) @Name(FN_PRINTLN)   }
+    @Method { @Lib(LIB_IO) @Name(FN_PRINT_INT) }
+}
+
+code:
+    @InitPc(code)
+
+    // REG_PROC (r14) <- puntero al proceso actual
+    getproc REG_PROC
+
+    // --- imprimir nombre de la aplicacion ---
+    // CON stdlib: REG_ARG1/REG_ARGC en lugar de r1/r15, METHOD_PRINTLN en lugar
+    // del string literal "stdlib/native/io/vesta_io:vio_println"
+    mov REG_ARG1, REG_PROC
+    mov REG_ARG2, @Absolute("all.app_name")
+    mov REG_ARG3, APP_NAME_LEN
+    mov REG_ARGC, 3
+    calln @Method(METHOD_PRINTLN)
+
+    // --- imprimir nombre del sistema operativo (OS_NAME de vesta/platform) ---
+    mov REG_ARG1, REG_PROC
+    mov REG_ARG2, @Absolute("all.os_name")
+    mov REG_ARG3, __STRLEN__(OS_NAME)
+    mov REG_ARGC, 3
+    calln @Method(METHOD_PRINTLN)
+
+    // --- imprimir nombre de arquitectura (ARCH_NAME de vesta/platform) ---
+    mov REG_ARG1, REG_PROC
+    mov REG_ARG2, @Absolute("all.arch_name")
+    mov REG_ARG3, __STRLEN__(ARCH_NAME)
+    mov REG_ARGC, 3
+    calln @Method(METHOD_PRINTLN)
+
+    // --- imprimir ARCH_BITS como entero (METHOD_PRINT_INT: REG_ARG1=valor, REG_ARGC=1) ---
+    mov REG_ARG1, ARCH_BITS
+    mov REG_ARGC, 1
+    calln @Method(METHOD_PRINT_INT)
+
+    // --- imprimir numero de registros (NUM_REGS de vesta/registers) ---
+    mov REG_ARG1, NUM_REGS
+    mov REG_ARGC, 1
+    calln @Method(METHOD_PRINT_INT)
+
+    // --- imprimir UINT32_MAX (de vesta/types) ---
+    mov REG_ARG1, UINT32_MAX
+    mov REG_ARGC, 1
+    calln @Method(METHOD_PRINT_INT)
+
+    // REG_RET (r0) = SIZEOF_QWORD * NUM_REGS = tamano del banco de registros en bytes
+    mov REG_RET, __MUL__(SIZEOF_QWORD, NUM_REGS)   // -> 128
+
+    hlt
+end_code:
+
+align 16
+data:
+    // CHAR_NUL (0) importado de vesta/io.vph — sustituye el magic number 0x00
+    app_name  db APP_NAME,  CHAR_NUL
+    os_name   db OS_NAME,   CHAR_NUL   // "Windows", "Linux" o "macOS" segun plataforma
+    arch_name db ARCH_NAME, CHAR_NUL   // "x86-64", "x86-32" o "AArch64"
+    dll_ext   db DLL_EXT,   CHAR_NUL   // ".dll", ".so" o ".dylib"
+    path_sep  db PATH_SEP,  CHAR_NUL   // "\" en Windows, "/" en Unix
+
+    // constantes numericas importadas (SIZEOF_QWORD, NUM_REGS, ARCH_BITS, UINT32_MAX)
+    sizeof_qword  dw SIZEOF_QWORD    // 8
+    num_regs      dw NUM_REGS        // 16
+    arch_bits     dw ARCH_BITS       // 64
+    uint32_max    dw UINT32_MAX      // 4294967295
+    reg_file_size dw __MUL__(SIZEOF_QWORD, NUM_REGS)  // 128 (bytes del banco de registros)
+end_data:

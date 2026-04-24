@@ -1,0 +1,58 @@
+// Ejemplo 03: Arrays y #foreach
+// Generacion de tablas y codigo para multiples tipos usando colecciones.
+
+#array OPCODES  (ADD, SUB, MUL, DIV, MOD)
+#array REGS     (r0, r1, r2, r3, r4, r5, r6, r7)
+
+@Format("velb")
+
+@SpaceAddress {
+    @Name("anonymous"),
+    @IniAddress(0x0000000000000000),
+    @EndAddress(0xFFFFFFFFFFFFFFFF)
+}
+
+@Section {
+    @Name("all"),
+    @SpaceAddress("anonymous")
+}
+
+@Import {
+    @Method { @Lib("stdlib/native/io/vesta_io") @Name("vio_println") }
+}
+
+code:
+    @InitPc(code)
+
+    getproc r14
+
+    // probar que el numero de opcodes se calculo en preprocesado
+    mov r0, __ARRAY_SIZE__(OPCODES)    // r0 = 5
+    mov r1, __ARRAY_SIZE__(REGS)       // r1 = 8
+
+    // imprimir primer opcode
+    mov r1, r14
+    mov r2, @Absolute("all.opcode_0")
+    mov r3, __STRLEN__(ADD)
+    mov r15, 3
+    calln @Method("stdlib/native/io/vesta_io:vio_println")
+
+    hlt
+end_code:
+
+align 16
+data:
+    // nombres de opcodes como cadenas (acceso por indice via __ARRAY_GET__)
+    opcode_0 db __TOUPPER__(__ARRAY_GET__(OPCODES, 0)), 0x00
+    opcode_1 db __TOUPPER__(__ARRAY_GET__(OPCODES, 1)), 0x00
+    opcode_2 db __TOUPPER__(__ARRAY_GET__(OPCODES, 2)), 0x00
+    opcode_3 db __TOUPPER__(__ARRAY_GET__(OPCODES, 3)), 0x00
+    opcode_4 db __TOUPPER__(__ARRAY_GET__(OPCODES, 4)), 0x00
+
+    num_opcodes dw __ARRAY_SIZE__(OPCODES)
+    num_regs    dw __ARRAY_SIZE__(REGS)
+
+    // acceso individual por indice
+    first_op  db __TOUPPER__(__ARRAY_GET__(OPCODES, 0)), 0x00   // "ADD"
+    last_op   db __TOUPPER__(__ARRAY_GET__(OPCODES, 4)), 0x00   // "MOD"
+end_data:

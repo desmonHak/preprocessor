@@ -1,0 +1,80 @@
+// Ejemplo 12: __ARRAY_JOIN__
+// __ARRAY_JOIN__(NOMBRE, sep) produce una cadena con todos los elementos del
+// array NOMBRE unidos por el separador sep (se le aplica unquote si es STRING).
+// Util para construir listas de texto en tiempo de preprocesado: mensajes de
+// ayuda, cabeceras CSV, listas de nombres de registro, etc.
+
+#array REGS    (r0, r1, r2, r3, r4, r5, r6, r7)
+#array TYPES   (int, float, double, char, bool)
+#array OPCODES (ADD, SUB, MUL, DIV)
+
+// listas precalculadas en tiempo de preprocesado
+#define REGS_LIST   __ARRAY_JOIN__(REGS, ", ")     // -> "r0, r1, r2, r3, r4, r5, r6, r7"
+#define TYPES_LIST  __ARRAY_JOIN__(TYPES, "|")     // -> "int|float|double|char|bool"
+#define OP_LIST     __ARRAY_JOIN__(OPCODES, " ")   // -> "ADD SUB MUL DIV"
+
+// longitudes calculadas con __STRLEN__ (strips las comillas antes de contar)
+#define REGS_LEN    __STRLEN__(REGS_LIST)    // -> 29
+#define TYPES_LEN   __STRLEN__(TYPES_LIST)   // -> 25
+#define OP_LEN      __STRLEN__(OP_LIST)      // -> 15
+
+@Format("velb")
+
+@SpaceAddress {
+    @Name("anonymous"),
+    @IniAddress(0x0000000000000000),
+    @EndAddress(0xFFFFFFFFFFFFFFFF)
+}
+
+@Section {
+    @Name("all"),
+    @SpaceAddress("anonymous")
+}
+
+@Import {
+    @Method { @Lib("stdlib/native/io/vesta_io") @Name("vio_println") }
+}
+
+code:
+    @InitPc(code)
+
+    getproc r14
+
+    // imprimir "r0, r1, r2, r3, r4, r5, r6, r7"
+    mov r1, r14
+    mov r2, @Absolute("all.reg_list")
+    mov r3, REGS_LEN
+    mov r15, 3
+    calln @Method("stdlib/native/io/vesta_io:vio_println")
+
+    // imprimir "int|float|double|char|bool"
+    mov r1, r14
+    mov r2, @Absolute("all.type_list")
+    mov r3, TYPES_LEN
+    mov r15, 3
+    calln @Method("stdlib/native/io/vesta_io:vio_println")
+
+    // imprimir "ADD SUB MUL DIV"
+    mov r1, r14
+    mov r2, @Absolute("all.op_list")
+    mov r3, OP_LEN
+    mov r15, 3
+    calln @Method("stdlib/native/io/vesta_io:vio_println")
+
+    hlt
+end_code:
+
+align 16
+data:
+    // "r0, r1, r2, r3, r4, r5, r6, r7"
+    reg_list  db __ARRAY_JOIN__(REGS, ", "), 0x00
+
+    // "int|float|double|char|bool"
+    type_list db __ARRAY_JOIN__(TYPES, "|"), 0x00
+
+    // "ADD SUB MUL DIV"
+    op_list   db __ARRAY_JOIN__(OPCODES, " "), 0x00
+
+    // metadatos: numero de opcodes
+    op_count  dw __ARRAY_SIZE__(OPCODES)
+end_data:

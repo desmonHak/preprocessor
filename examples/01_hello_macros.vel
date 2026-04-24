@@ -1,0 +1,70 @@
+// Ejemplo 01: Macros basicas y expresiones
+// Demuestra #define, macros objeto, macros funcion y operadores basicos.
+
+#define AUTHOR   "desmonHak"
+#define VERSION  3
+#define PATCH    1
+
+// macro funcion: construye la cadena de version
+#define VER_STRING(maj, min, pat) __STRCAT__(__STRCAT__(maj, "."), __STRCAT__(min, __STRCAT__(".", pat)))
+
+// plataforma detectada en tiempo de preprocesado
+#ifdef __VPP_WINDOWS__
+    #define PLATFORM "Windows"
+#elif defined(__VPP_LINUX__)
+    #define PLATFORM "Linux"
+#else
+    #define PLATFORM "Unknown"
+#endif
+
+// VERSION * 100 + PATCH evaluado como entero por #set (PPEvaluator)
+#set VERSION_CODE = VERSION * 100 + PATCH
+
+@Format("velb")
+
+@SpaceAddress {
+    @Name("anonymous"),
+    @IniAddress(0x0000000000000000),
+    @EndAddress(0xFFFFFFFFFFFFFFFF)
+}
+
+@Section {
+    @Name("all"),
+    @SpaceAddress("anonymous")
+}
+
+@Import {
+    @Method { @Lib("stdlib/native/io/vesta_io") @Name("vio_println") }
+}
+
+code:
+    @InitPc(code)
+
+    getproc r14
+
+    // imprimir autor
+    mov r1, r14
+    mov r2, @Absolute("all.author")
+    mov r3, __STRLEN__(desmonHak)
+    mov r15, 3
+    calln @Method("stdlib/native/io/vesta_io:vio_println")
+
+    // imprimir plataforma
+    mov r1, r14
+    mov r2, @Absolute("all.platform")
+    mov r3, __STRLEN__(PLATFORM)
+    mov r15, 3
+    calln @Method("stdlib/native/io/vesta_io:vio_println")
+
+    // VERSION_CODE = VERSION * 100 + PATCH calculado por #set en preprocesado
+    mov r0, VERSION_CODE
+
+    hlt
+end_code:
+
+align 16
+data:
+    author   db AUTHOR, 0x00
+    platform db PLATFORM, 0x00
+    version  db VER_STRING(3, 1, 0), 0x00
+end_data:

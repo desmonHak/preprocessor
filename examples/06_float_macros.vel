@@ -1,0 +1,92 @@
+// Ejemplo 06: Macros de punto flotante IEEE 754
+// Los valores se representan como bits de doubles de 64 bits.
+// Usar __F2BITS__(valor) para convertir un literal decimal a bits.
+//
+// Constantes IEEE 754 (bits como entero de 64 bits):
+//   0.0 = 0
+//   1.0 = 4607182418800017408   (__F2BITS__(1.0))
+//   2.0 = 4611686018427387904
+//   pi  = 4614256656552045848   (__FPI__())
+
+#define F_ONE    4607182418800017408
+#define F_TWO    4611686018427387904
+#define F_PI     __FPI__()
+#define F_E      __FEXP__(F_ONE)           // e = exp(1)
+
+// radio = 5.0, area = pi * r^2
+#define F_FIVE   __ITOF__(5)
+#define F_R2     __FMUL__(F_FIVE, F_FIVE)  // 25.0
+#define F_AREA   __FMUL__(F_PI, F_R2)      // pi * 25
+
+// sin(pi/2) = 1.0
+#define F_HALF_PI  __FDIV__(F_PI, F_TWO)
+#define F_SIN90    __FSIN__(F_HALF_PI)
+
+// conversion: 180 grados -> pi radianes
+#define F_DEG180  __ITOF__(180)
+#define F_RAD180  __FDEG2RAD__(F_DEG180)
+
+// comparaciones en tiempo de preprocesado
+#define F_THREE  __ITOF__(3)
+#define F_FOUR   __ITOF__(4)
+
+@Format("velb")
+
+@SpaceAddress {
+    @Name("anonymous"),
+    @IniAddress(0x0000000000000000),
+    @EndAddress(0xFFFFFFFFFFFFFFFF)
+}
+
+@Section {
+    @Name("all"),
+    @SpaceAddress("anonymous")
+}
+
+@Import {
+    @Method { @Lib("stdlib/native/io/vesta_io") @Name("vio_print_int") }
+}
+
+code:
+    @InitPc(code)
+
+    getproc r14
+
+    // cargar bits de pi
+    mov r0, F_PI                       // bits IEEE 754 de pi
+
+    // verificar sin(pi/2) == 1.0
+    mov r1, F_SIN90                    // deberia ser F_ONE
+    cmpu r1, F_ONE
+    jmp.jne @Absolute("all.sin_fail")
+
+    mov r0, 1                          // test pasado
+    jmp @Absolute("all.done")
+
+sin_fail:
+    mov r0, 0                          // test fallado
+
+done:
+    // imprimir resultado como entero (vio_print_int: r1=valor, r15=1, sin proc_ptr)
+    mov r1, r0
+    mov r15, 1
+    calln @Method("stdlib/native/io/vesta_io:vio_print_int")
+
+    hlt
+end_code:
+
+align 16
+data:
+    const_pi    dq F_PI               // bits de pi
+    const_e     dq F_E                // bits de e
+    circle_area dq F_AREA             // bits de pi * 25
+    sin_90      dq F_SIN90            // bits de sin(pi/2) = 1.0
+    rad_180     dq F_RAD180           // bits de pi (180 grados en radianes)
+
+    // comparacion: 3.0 < 4.0 -> 1
+    three_lt_four dw __FLT__(F_THREE, F_FOUR)
+    // comparacion: 4.0 > 3.0 -> 1
+    four_gt_three dw __FGT__(F_FOUR, F_THREE)
+    // 0.0 es cero -> 1
+    zero_check    dw __FISZERO__(0)
+end_data:

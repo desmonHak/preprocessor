@@ -1,0 +1,71 @@
+// Ejemplo 04: Macros de manipulacion de cadenas
+// Demostracion de __STRLEN__, __TOUPPER__, __SUBSTR__, __STRCAT__, etc.
+
+#define MODULE_NAME "stdlib.io.vesta"
+#define PREFIX      "vesta_"
+#define SUFFIX      "_handler"
+
+// construir nombre de funcion: "vesta_draw_handler"
+#define FUNC_NAME __STRCAT__(PREFIX, __STRCAT__(draw, SUFFIX))
+
+// ruta del modulo: cambiar '.' por '/'
+#define MODULE_PATH __STRREPLACE__(MODULE_NAME, ., /)
+
+// longitudes calculadas en preprocesado
+#define FUNC_LEN  __STRLEN__(FUNC_NAME)
+#define PATH_LEN  __STRLEN__(stdlib/io/vesta)
+
+@Format("velb")
+
+@SpaceAddress {
+    @Name("anonymous"),
+    @IniAddress(0x0000000000000000),
+    @EndAddress(0xFFFFFFFFFFFFFFFF)
+}
+
+@Section {
+    @Name("all"),
+    @SpaceAddress("anonymous")
+}
+
+@Import {
+    @Method { @Lib("stdlib/native/io/vesta_io") @Name("vio_println") }
+    @Method { @Lib("stdlib/native/io/vesta_io") @Name("vio_print_int") }
+}
+
+code:
+    @InitPc(code)
+
+    getproc r14
+
+    // imprimir el nombre de funcion generado
+    mov r1, r14
+    mov r2, @Absolute("all.func_name")
+    mov r3, FUNC_LEN
+    mov r15, 3
+    calln @Method("stdlib/native/io/vesta_io:vio_println")
+
+    // imprimir la ruta del modulo
+    mov r1, r14
+    mov r2, @Absolute("all.module_path")
+    mov r3, PATH_LEN
+    mov r15, 3
+    calln @Method("stdlib/native/io/vesta_io:vio_println")
+
+    // imprimir longitud del nombre (vio_print_int: r1=valor, r15=1, sin proc_ptr)
+    mov r1, FUNC_LEN
+    mov r15, 1
+    calln @Method("stdlib/native/io/vesta_io:vio_print_int")
+
+    hlt
+end_code:
+
+align 16
+data:
+    func_name   db FUNC_NAME, 0x00
+    module_path db MODULE_PATH, 0x00
+    upper_mod   db __TOUPPER__(stdlib), 0x00      // "STDLIB"
+    sub_name    db __SUBSTR__(hello world, 6, 5), 0x00  // "world"
+    func_len    dw FUNC_LEN
+    path_len    dw PATH_LEN
+end_data:

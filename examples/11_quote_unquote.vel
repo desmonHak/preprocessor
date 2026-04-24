@@ -1,0 +1,78 @@
+// Ejemplo 11: __QUOTE__ y __UNQUOTE__
+// __QUOTE__(x) convierte un token IDENT en una cadena literal entre comillas.
+// Es indispensable cuando __ARRAY_GET__ devuelve un IDENT y se necesita una
+// cadena para la directiva db: "db ADD" crashea el parser, "db "ADD"" funciona.
+// __UNQUOTE__(s) hace lo contrario: extrae el contenido de una cadena como IDENT,
+// util para definir nombres de etiqueta o macro desde un literal de cadena.
+
+// arrays con nombres en minuscula: sin __QUOTE__ -> "db add" -> crash del parser
+#array OPS_LOW  (add, sub, mul, div, mod)
+
+// arrays con nombres en mayuscula: tambien necesitan __QUOTE__ o __TOUPPER__
+#array OPS_HIGH (ADD, SUB, MUL, DIV, MOD)
+
+// __UNQUOTE__ crea un identificador desde un literal de cadena
+// SECT_NAME expande a "op_table" como IDENT (no como cadena entre comillas)
+#define SECT_NAME  __UNQUOTE__("op_table")
+
+@Format("velb")
+
+@SpaceAddress {
+    @Name("anonymous"),
+    @IniAddress(0x0000000000000000),
+    @EndAddress(0xFFFFFFFFFFFFFFFF)
+}
+
+@Section {
+    @Name("all"),
+    @SpaceAddress("anonymous")
+}
+
+@Import {
+    @Method { @Lib("stdlib/native/io/vesta_io") @Name("vio_println") }
+}
+
+code:
+    @InitPc(code)
+
+    getproc r14
+
+    // imprimir "add" (minuscula, preservada por __QUOTE__)
+    mov r1, r14
+    mov r2, @Absolute("all.op_low_0")
+    mov r3, 3
+    mov r15, 3
+    calln @Method("stdlib/native/io/vesta_io:vio_println")
+
+    // imprimir "ADD" (__TOUPPER__ tambien cita pero convierte a mayuscula)
+    mov r1, r14
+    mov r2, @Absolute("all.op_high_0")
+    mov r3, 3
+    mov r15, 3
+    calln @Method("stdlib/native/io/vesta_io:vio_println")
+
+    hlt
+end_code:
+
+align 16
+data:
+    // __QUOTE__ preserva la caja original: "add", "sub", "mul", "div", "mod"
+    // Sin __QUOTE__: db add  -> crash (IDENT donde se espera STRING)
+    // Con __QUOTE__: db "add" -> correcto
+    op_low_0 db __QUOTE__(__ARRAY_GET__(OPS_LOW, 0)), 0x00   // -> "add"
+    op_low_1 db __QUOTE__(__ARRAY_GET__(OPS_LOW, 1)), 0x00   // -> "sub"
+    op_low_2 db __QUOTE__(__ARRAY_GET__(OPS_LOW, 2)), 0x00   // -> "mul"
+    op_low_3 db __QUOTE__(__ARRAY_GET__(OPS_LOW, 3)), 0x00   // -> "div"
+    op_low_4 db __QUOTE__(__ARRAY_GET__(OPS_LOW, 4)), 0x00   // -> "mod"
+
+    // __TOUPPER__ tambien cita, pero ademas convierte a mayuscula: "ADD"
+    op_high_0 db __TOUPPER__(__ARRAY_GET__(OPS_HIGH, 0)), 0x00   // -> "ADD"
+    op_high_1 db __TOUPPER__(__ARRAY_GET__(OPS_HIGH, 1)), 0x00   // -> "SUB"
+    op_high_2 db __TOUPPER__(__ARRAY_GET__(OPS_HIGH, 2)), 0x00   // -> "MUL"
+    op_high_3 db __TOUPPER__(__ARRAY_GET__(OPS_HIGH, 3)), 0x00   // -> "DIV"
+    op_high_4 db __TOUPPER__(__ARRAY_GET__(OPS_HIGH, 4)), 0x00   // -> "MOD"
+
+    // __UNQUOTE__ -> el identificador SECT_NAME expande a "op_table" (sin comillas)
+    // esto crea la etiqueta: op_table dw 5
+    SECT_NAME dw __ARRAY_SIZE__(OPS_LOW)   // -> op_table dw 5
+end_data:

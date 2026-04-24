@@ -1,0 +1,73 @@
+// Ejemplo 07: vpp como sistema de build
+// Usa #exec para incrustar informacion del repositorio en el binario.
+
+// Metadatos del build incrustados en tiempo de compilacion.
+// En un entorno con git, usar #exec para obtener valores reales:
+// #exec GIT_TAG    git describe --tags --abbrev=0
+// #exec GIT_HASH   git rev-parse --short HEAD
+// #exec GIT_BRANCH git rev-parse --abbrev-ref HEAD
+// #exec BUILD_DATE date +%Y-%m-%d
+#define GIT_TAG     "v0.1.0"
+#define GIT_HASH    "abc1234"
+#define GIT_BRANCH  "main"
+#define BUILD_DATE  "2026-04-24"
+
+// longitudes de los metadatos (calculadas en preprocesado)
+#define HASH_LEN   __STRLEN__(GIT_HASH)
+#define BRANCH_LEN __STRLEN__(GIT_BRANCH)
+
+// extension de libreria segun plataforma
+#ifdef __VPP_WINDOWS__
+    #define LIB_EXT "dll"
+#else
+    #define LIB_EXT "so"
+#endif
+
+@Format("velb")
+
+@SpaceAddress {
+    @Name("anonymous"),
+    @IniAddress(0x0000000000000000),
+    @EndAddress(0xFFFFFFFFFFFFFFFF)
+}
+
+@Section {
+    @Name("all"),
+    @SpaceAddress("anonymous")
+}
+
+@Import {
+    @Method { @Lib("stdlib/native/io/vesta_io") @Name("vio_println") }
+}
+
+code:
+    @InitPc(code)
+
+    getproc r14
+
+    // imprimir hash del commit actual
+    mov r1, r14
+    mov r2, @Absolute("all.commit_hash")
+    mov r3, HASH_LEN
+    mov r15, 3
+    calln @Method("stdlib/native/io/vesta_io:vio_println")
+
+    // imprimir rama actual
+    mov r1, r14
+    mov r2, @Absolute("all.branch_name")
+    mov r3, BRANCH_LEN
+    mov r15, 3
+    calln @Method("stdlib/native/io/vesta_io:vio_println")
+
+    hlt
+end_code:
+
+align 16
+data:
+    // metadatos del build incrustados en el binario
+    version_tag  db GIT_TAG,    0x00
+    commit_hash  db GIT_HASH,   0x00
+    branch_name  db GIT_BRANCH, 0x00
+    build_date   db BUILD_DATE, 0x00
+    lib_name     db "libvesta.", LIB_EXT, 0x00
+end_data:

@@ -1,0 +1,82 @@
+// Ejemplo 09: Condicionales de plataforma y arquitectura
+// Configuracion portable usando las macros predefinidas de plataforma.
+
+// extension de libreria dinamica
+#ifdef __VPP_WINDOWS__
+    #define DLL_EXT  "dll"
+    #define PATH_SEP 0x5C       // '\'
+#elif defined(__VPP_LINUX__)
+    #define DLL_EXT  "so"
+    #define PATH_SEP 0x2F       // '/'
+#elif defined(__VPP_MACOS__)
+    #define DLL_EXT  "dylib"
+    #define PATH_SEP 0x2F
+#else
+    #define DLL_EXT  "bin"
+    #define PATH_SEP 0x2F
+#endif
+
+// tamano de puntero segun arquitectura
+#ifdef __VPP_X86_64__
+    #define POINTER_SIZE  8
+    #define STACK_ALIGN   16
+#elif defined(__VPP_X86_32__)
+    #define POINTER_SIZE  4
+    #define STACK_ALIGN   4
+#elif defined(__VPP_AARCH64__)
+    #define POINTER_SIZE  8
+    #define STACK_ALIGN   16
+#else
+    #define POINTER_SIZE  4
+    #define STACK_ALIGN   4
+#endif
+
+// punteros por linea de cache (64 bytes / tamano de puntero)
+#define CACHE_LINE   64
+#define PTRS_PER_CL  __DIV__(CACHE_LINE, POINTER_SIZE)
+
+@Format("velb")
+
+@SpaceAddress {
+    @Name("anonymous"),
+    @IniAddress(0x0000000000000000),
+    @EndAddress(0xFFFFFFFFFFFFFFFF)
+}
+
+@Section {
+    @Name("all"),
+    @SpaceAddress("anonymous")
+}
+
+@Import {
+    @Method { @Lib("stdlib/native/io/vesta_io") @Name("vio_println") }
+}
+
+code:
+    @InitPc(code)
+
+    getproc r14
+
+    // cargar constantes de plataforma calculadas en preprocesado
+    mov r0, POINTER_SIZE        // 8 en x64
+    mov r1, STACK_ALIGN         // 16 en x64
+    mov r2, PTRS_PER_CL         // 8 en x64
+
+    // imprimir extension de libreria
+    mov r1, r14
+    mov r2, @Absolute("all.lib_ext")
+    mov r3, __STRLEN__(DLL_EXT)
+    mov r15, 3
+    calln @Method("stdlib/native/io/vesta_io:vio_println")
+
+    hlt
+end_code:
+
+align 16
+data:
+    ptr_size    dw POINTER_SIZE
+    stack_align dw STACK_ALIGN
+    ptrs_per_cl dw PTRS_PER_CL
+    lib_ext     db DLL_EXT, 0x00
+    path_sep    db PATH_SEP
+end_data:

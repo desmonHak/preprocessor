@@ -1,0 +1,135 @@
+// Ejemplo 10: Programa completo — interprete de VM compacto
+// Demuestra como integrar todas las funcionalidades del preprocesador
+// para generar un dispatch loop completo de una VM de stack.
+
+// configuracion global calculada en preprocesado
+#define VM_STACK_WORDS  __POW__(2, 10)     // 1024 entradas de 64 bits
+#define VM_MEM_BYTES    __POW__(2, 16)     // 64 KB
+#define VM_NUM_REGS     16
+#define VM_OPCODE_BITS  8
+
+// mascaras de flags del procesador
+#define FLAG_ZF   0x01
+#define FLAG_CF   0x02
+#define FLAG_SF   0x04
+#define FLAG_OF   0x08
+
+// tabla de opcodes con IDs autoincrementales
+#array VM_OPCODES (NOP, PUSH, POP, MOV, ADD, SUB, MUL, DIV, AND, OR, XOR, NOT, CMP, JMP, JZ, CALL, RET, HLT)
+
+// asignar IDs consecutivos como macros (usando __ARRAY_FIND__ para cada opcode)
+#define OP_NOP  __ARRAY_FIND__(VM_OPCODES, NOP)
+#define OP_PUSH __ARRAY_FIND__(VM_OPCODES, PUSH)
+#define OP_POP  __ARRAY_FIND__(VM_OPCODES, POP)
+#define OP_MOV  __ARRAY_FIND__(VM_OPCODES, MOV)
+#define OP_ADD  __ARRAY_FIND__(VM_OPCODES, ADD)
+#define OP_SUB  __ARRAY_FIND__(VM_OPCODES, SUB)
+#define OP_MUL  __ARRAY_FIND__(VM_OPCODES, MUL)
+#define OP_DIV  __ARRAY_FIND__(VM_OPCODES, DIV)
+#define OP_AND  __ARRAY_FIND__(VM_OPCODES, AND)
+#define OP_OR   __ARRAY_FIND__(VM_OPCODES, OR)
+#define OP_XOR  __ARRAY_FIND__(VM_OPCODES, XOR)
+#define OP_NOT  __ARRAY_FIND__(VM_OPCODES, NOT)
+#define OP_CMP  __ARRAY_FIND__(VM_OPCODES, CMP)
+#define OP_JMP  __ARRAY_FIND__(VM_OPCODES, JMP)
+#define OP_JZ   __ARRAY_FIND__(VM_OPCODES, JZ)
+#define OP_CALL __ARRAY_FIND__(VM_OPCODES, CALL)
+#define OP_RET  __ARRAY_FIND__(VM_OPCODES, RET)
+#define OP_HLT  __ARRAY_FIND__(VM_OPCODES, HLT)
+
+#define NUM_OPCODES  __ARRAY_SIZE__(VM_OPCODES)
+
+// version del interprete usando macros del preprocesador
+#define INTERP_VER  __STRCAT__(__VPP_VERSION_MAJOR__, __STRCAT__(".", __VPP_VERSION_MINOR__))
+
+@Format("velb")
+
+@SpaceAddress {
+    @Name("anonymous"),
+    @IniAddress(0x0000000000000000),
+    @EndAddress(0xFFFFFFFFFFFFFFFF)
+}
+
+@Section {
+    @Name("all"),
+    @SpaceAddress("anonymous")
+}
+
+@Import {
+    @Method { @Lib("stdlib/native/io/vesta_io") @Name("vio_println") }
+    @Method { @Lib("stdlib/native/io/vesta_io") @Name("vio_print_int") }
+}
+
+code:
+    @InitPc(code)
+
+    getproc r14
+
+    // imprimir nombre del interprete
+    mov r1, r14
+    mov r2, @Absolute("all.interp_name")
+    mov r3, 19
+    mov r15, 3
+    calln @Method("stdlib/native/io/vesta_io:vio_println")
+
+    // imprimir numero de opcodes disponibles (vio_print_int: r1=valor, r15=1, sin proc_ptr)
+    mov r1, NUM_OPCODES
+    mov r15, 1
+    calln @Method("stdlib/native/io/vesta_io:vio_print_int")
+
+    // fetch-decode-execute simplificado:
+    // cargar opcode desde r10 (simulado como inmediato)
+    mov r10, OP_NOP           // NOP = 0
+
+    // verificar limite: si r10 == NUM_OPCODES esta fuera de rango
+    cmpu r10, NUM_OPCODES
+    jmp.je @Absolute("all.illegal_opcode")
+
+    // calcular offset en dispatch table: opcode * 8
+    mov r11, r10
+    mov r12, 8
+    muls r11, r12
+    mov r12, @Absolute("all.dispatch_table")
+    adds r12, r11
+
+    jmp @Absolute("all.done")
+
+illegal_opcode:
+    mov r0, 0xFFFFFFFFFFFFFFFF  // -1 en dos complemento
+
+done:
+    hlt
+end_code:
+
+align 16
+data:
+    interp_name    db "VestaVM Interpreter", 0x00
+    interp_version db INTERP_VER, 0x00
+    stack_size     dw VM_STACK_WORDS
+    mem_size       dw VM_MEM_BYTES
+    num_regs       dw VM_NUM_REGS
+    num_opcodes    dw NUM_OPCODES
+
+    // tabla de dispatch: punteros a manejadores (placeholder 0, 18 entradas para VM_OPCODES)
+    dispatch_table dq 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+
+    // nombres de opcodes para el desensamblador (acceso por indice)
+    opname_0  db __TOUPPER__(__ARRAY_GET__(VM_OPCODES, 0)),  0x00
+    opname_1  db __TOUPPER__(__ARRAY_GET__(VM_OPCODES, 1)),  0x00
+    opname_2  db __TOUPPER__(__ARRAY_GET__(VM_OPCODES, 2)),  0x00
+    opname_3  db __TOUPPER__(__ARRAY_GET__(VM_OPCODES, 3)),  0x00
+    opname_4  db __TOUPPER__(__ARRAY_GET__(VM_OPCODES, 4)),  0x00
+    opname_5  db __TOUPPER__(__ARRAY_GET__(VM_OPCODES, 5)),  0x00
+    opname_6  db __TOUPPER__(__ARRAY_GET__(VM_OPCODES, 6)),  0x00
+    opname_7  db __TOUPPER__(__ARRAY_GET__(VM_OPCODES, 7)),  0x00
+    opname_8  db __TOUPPER__(__ARRAY_GET__(VM_OPCODES, 8)),  0x00
+    opname_9  db __TOUPPER__(__ARRAY_GET__(VM_OPCODES, 9)),  0x00
+    opname_10 db __TOUPPER__(__ARRAY_GET__(VM_OPCODES, 10)), 0x00
+    opname_11 db __TOUPPER__(__ARRAY_GET__(VM_OPCODES, 11)), 0x00
+    opname_12 db __TOUPPER__(__ARRAY_GET__(VM_OPCODES, 12)), 0x00
+    opname_13 db __TOUPPER__(__ARRAY_GET__(VM_OPCODES, 13)), 0x00
+    opname_14 db __TOUPPER__(__ARRAY_GET__(VM_OPCODES, 14)), 0x00
+    opname_15 db __TOUPPER__(__ARRAY_GET__(VM_OPCODES, 15)), 0x00
+    opname_16 db __TOUPPER__(__ARRAY_GET__(VM_OPCODES, 16)), 0x00
+    opname_17 db __TOUPPER__(__ARRAY_GET__(VM_OPCODES, 17)), 0x00
+end_data:

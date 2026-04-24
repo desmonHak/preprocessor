@@ -1,0 +1,67 @@
+// vesta/io.vph — constantes de entrada/salida estandar para la VM Vesta
+// Uso: #import <vesta/io>
+#pragma once
+
+// --- descriptores de archivo estandar ----------------------------------------
+#define STDIN           0
+#define STDOUT          1
+#define STDERR          2
+
+// --- codigos de resultado de operaciones E/S ----------------------------------
+#define EOK             0   // operacion exitosa
+#define EFAIL           -1  // error generico
+#define ENOFILE         -2  // archivo no encontrado
+#define EPERM           -3  // permiso denegado
+#define ENOMEM          -4  // sin memoria
+#define EINVAL          -5  // argumento invalido
+#define EEOF            -6  // fin de archivo
+
+// --- caracteres especiales (valores ASCII) ------------------------------------
+#define CHAR_NUL        0    // terminador de cadena
+#define CHAR_TAB        9    // tabulacion horizontal
+#define CHAR_LF         10   // salto de linea (Unix)
+#define CHAR_CR         13   // retorno de carro (Windows junto con LF)
+#define CHAR_SPC        32   // espacio
+#define CHAR_DEL        127  // borrar
+
+// --- modos de apertura de archivo (para vio_fopen) ----------------------------
+#define FMODE_READ      0    // solo lectura ("r")
+#define FMODE_WRITE     1    // solo escritura, truncar ("w")
+#define FMODE_APPEND    2    // escritura al final ("a")
+#define FMODE_RDWR      3    // lectura y escritura ("r+")
+#define FMODE_RDWR_NEW  4    // lectura y escritura, crear/truncar ("w+")
+
+// --- limites de buffer -------------------------------------------------------
+#define IO_BUF_SMALL    64
+#define IO_BUF_MEDIUM   256
+#define IO_BUF_LARGE    4096
+#define IO_BUF_PAGE     65536
+
+// --- abreviaturas de stdlib nativa de E/S ------------------------------------
+#define LIB_IO          "stdlib/native/io/vesta_io"
+#define FN_PRINT        "vio_print"
+#define FN_PRINTLN      "vio_println"
+#define FN_PRINT_INT    "vio_print_int"
+#define FN_PRINT_UINT   "vio_print_uint"
+#define FN_PRINT_HEX    "vio_print_hex"
+#define FN_PRINT_FLOAT  "vio_print_float"
+#define FN_FOPEN        "vio_fopen"
+#define FN_FCLOSE       "vio_fclose"
+#define FN_FREAD        "vio_fread"
+#define FN_FWRITE       "vio_fwrite"
+#define FN_FFLUSH       "vio_fflush"
+
+// --- strings de metodo completos para calln (@Method) ------------------------
+// Uso: calln @Method(METHOD_PRINTLN)
+// Equivalente a: calln @Method("stdlib/native/io/vesta_io:vio_println")
+#define METHOD_PRINT        __STRCAT__(LIB_IO, ":vio_print")
+#define METHOD_PRINTLN      __STRCAT__(LIB_IO, ":vio_println")
+#define METHOD_PRINT_INT    __STRCAT__(LIB_IO, ":vio_print_int")
+#define METHOD_PRINT_UINT   __STRCAT__(LIB_IO, ":vio_print_uint")
+#define METHOD_PRINT_HEX    __STRCAT__(LIB_IO, ":vio_print_hex")
+#define METHOD_PRINT_FLOAT  __STRCAT__(LIB_IO, ":vio_print_float")
+#define METHOD_FOPEN        __STRCAT__(LIB_IO, ":vio_fopen")
+#define METHOD_FCLOSE       __STRCAT__(LIB_IO, ":vio_fclose")
+#define METHOD_FREAD        __STRCAT__(LIB_IO, ":vio_fread")
+#define METHOD_FWRITE       __STRCAT__(LIB_IO, ":vio_fwrite")
+#define METHOD_FFLUSH       __STRCAT__(LIB_IO, ":vio_fflush")

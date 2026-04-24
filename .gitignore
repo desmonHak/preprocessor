@@ -1,0 +1,55 @@
+# carpetas de configuración de IDEs y entornos virtuales
+.idea
+.xmake
+.vscode
+.venv
+
+# CMake build directories
+cmake-build-debug
+cmake-build-release
+cmake-build-*
+build*
+build-windows
+build-linux
+
+# certificados y claves privadas
+*.pem
+
+# librerias compiladas y archivos de configuración de OpenSSL
+libs/Windows/OpenSSL-Win64/bin
+libs/Windows/OpenSSL-Win64/exp
+libssl*
+libcrypto*
+
+_pdf
+read_bytecode.hexpat
+
+diagramas
+
+# Carpeta de documentación generada por Doxygen
+./doc/doxygen_doc
+doxygen_doc
+
+# est ees un code de prueba de 6 millones de instrucciones
+code_carga_pruebas.vel
+
+# Archivos de bytecode compilados
+*.velb
+*.velb-map
+*.exe
+*.o
+*.elf
+*.gch
+*.obj
+*.dll
+
+# historiales de ejecución de comandos
+*history.txt
+
+generated_vel_files
+
+# Archivos temp de agentes de AI
+claude*
+chatgpt*
+copilot*
+deepseck*

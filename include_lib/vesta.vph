@@ -1,0 +1,9 @@
+// vesta.vph — cabecera de conveniencia: importa todos los modulos de la stdlib vpp
+// Uso: #import <vesta>
+#pragma once
+
+#import <vesta/types>
+#import <vesta/registers>
+#import <vesta/platform>
+#import <vesta/math>
+#import <vesta/io>

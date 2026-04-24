@@ -1,0 +1,82 @@
+// Ejemplo 13: #assert
+// #assert expr [mensaje] evalua expr en tiempo de preprocesado.
+// Si el resultado es 0 (falso), emite un error fatal con el mensaje dado
+// y detiene el preprocesado. Es ideal para verificar invariantes de compilacion:
+// tamanos de estructuras, alineaciones, rangos de constantes, etc.
+
+// constantes de la VM que deben cumplir invariantes
+#define MAX_REGS      16
+#define STACK_SIZE    256
+#define PAGE_SIZE     4096
+#define ENTRY_SIZE    8
+#define MAX_OPCODES   64
+
+// alineaciones requeridas
+#define CODE_ALIGN    16
+#define DATA_ALIGN    8
+
+// --- verificaciones de invariantes ---
+
+// el numero de registros debe ser potencia de 2 y <= 32
+#assert __ISODD__(MAX_REGS) == 0            "MAX_REGS debe ser par"
+#assert __LOG2__(MAX_REGS) >= 1             "MAX_REGS debe ser al menos 2"
+#assert MAX_REGS <= 32                      "MAX_REGS no puede superar 32"
+
+// el tamano de pila debe ser multiplo del tamano de entrada
+#assert __MOD__(STACK_SIZE, ENTRY_SIZE) == 0  "STACK_SIZE debe ser multiplo de ENTRY_SIZE"
+
+// la alineacion del codigo debe ser potencia de 2
+#assert __BITTEST__(CODE_ALIGN, 0) == 0     "CODE_ALIGN debe ser potencia de 2 (par)"
+#assert CODE_ALIGN >= 8                     "CODE_ALIGN minimo es 8 bytes"
+
+// PAGE_SIZE debe ser >= STACK_SIZE
+#assert PAGE_SIZE >= STACK_SIZE             "PAGE_SIZE debe ser mayor o igual a STACK_SIZE"
+
+// MAX_OPCODES debe caber en un byte
+#assert MAX_OPCODES <= 256                  "MAX_OPCODES no cabe en un byte"
+
+// verificacion de rango: ENTRY_SIZE alineado a DATA_ALIGN
+#assert __MOD__(ENTRY_SIZE, DATA_ALIGN) == 0 || ENTRY_SIZE < DATA_ALIGN  "ENTRY_SIZE desalineado"
+
+// verificacion compuesta: la tabla de opcodes cabe en un segmento de 512 bytes
+#define OPCODE_TABLE_SIZE  __MUL__(MAX_OPCODES, ENTRY_SIZE)   // 64 * 8 = 512
+#assert OPCODE_TABLE_SIZE <= 512            "tabla de opcodes demasiado grande"
+
+// ejemplo de assert con expresion compleja (logaritmo y comparacion)
+#assert __LOG2__(PAGE_SIZE) == 12           "PAGE_SIZE debe ser 2^12 = 4096"
+
+// --- las siguientes lineas estarian comentadas para no detener el preprocesado ---
+// #assert MAX_REGS == 32  "MAX_REGS deberia ser 32"   // FALLARIA: 16 != 32
+// #assert STACK_SIZE > PAGE_SIZE  "pila mayor que pagina"  // FALLARIA: 256 > 4096
+
+@Format("velb")
+
+@SpaceAddress {
+    @Name("anonymous"),
+    @IniAddress(0x0000000000000000),
+    @EndAddress(0xFFFFFFFFFFFFFFFF)
+}
+
+@Section {
+    @Name("all"),
+    @SpaceAddress("anonymous")
+}
+
+code:
+    @InitPc(code)
+
+    // si llegamos aqui, todos los #assert pasaron en preprocesado
+    mov r0, MAX_REGS           // r0 = 16
+    mov r1, STACK_SIZE         // r1 = 256
+    mov r2, OPCODE_TABLE_SIZE  // r2 = 512
+
+    hlt
+end_code:
+
+align 16
+data:
+    max_regs         dw MAX_REGS
+    stack_size       dw STACK_SIZE
+    opcode_tbl_size  dw OPCODE_TABLE_SIZE
+    page_size        dw PAGE_SIZE
+end_data:

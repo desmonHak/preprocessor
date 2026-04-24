@@ -1,0 +1,39 @@
+// vesta/registers.vph — aliases semanticos para los registros de la VM Vesta
+// Uso: #import <vesta/registers>
+//
+// Convencion de llamada:
+//   r0  = valor de retorno
+//   r1  = primer argumento
+//   r2  = segundo argumento
+//   ...
+//   r12 = duodecimo argumento
+//   r13 = registro de uso general / contador de iteracion
+//   r14 = puntero al proceso actual (ProcessVM*) — obtenido con getproc
+//   r15 = numero de argumentos (argc) para calln
+#pragma once
+
+// registro de retorno de funcion
+#define REG_RET         r0
+
+// registros de argumentos de funcion (calln / callvm)
+#define REG_ARG1        r1
+#define REG_ARG2        r2
+#define REG_ARG3        r3
+#define REG_ARG4        r4
+#define REG_ARG5        r5
+#define REG_ARG6        r6
+#define REG_ARG7        r7
+#define REG_ARG8        r8
+#define REG_ARG9        r9
+#define REG_ARG10       r10
+#define REG_ARG11       r11
+#define REG_ARG12       r12
+
+// registros de proposito especial
+#define REG_ITER        r13   // contador de bucles / temporal general
+#define REG_PROC        r14   // puntero al ProcessVM actual (getproc)
+#define REG_ARGC        r15   // numero de argumentos para calln / callvm
+
+// numero maximo de registros de proposito general
+#define NUM_REGS        16
+#define MAX_ARG_REGS    12

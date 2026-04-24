@@ -1,0 +1,86 @@
+// Ejemplo 05: Macros numericas, conversion de bases y manipulacion de bits
+
+// Constantes calculadas en tiempo de preprocesado
+#define BUFFER_BITS  12
+#define BUFFER_SIZE  __POW__(2, BUFFER_BITS)     // = 4096
+
+// mascara de alineacion a 64 bytes
+#define ALIGN64_MASK  ~(64 - 1)
+
+// constante magica
+#define MAGIC 0xDEADBEEF
+
+// manipulacion de bytes y words de MAGIC
+#define MAGIC_LO  __LOBYTE__(MAGIC)          // 0xEF = 239
+#define MAGIC_HI  __HIBYTE__(MAGIC)          // 0xBE = 190
+#define MAGIC_LW  __LOWORD__(MAGIC)          // 0xBEEF = 48879
+#define MAGIC_SW  __SWAP32__(MAGIC)          // 0xEFBEADDE = 4022250974
+
+// flags de bits
+#define FLAGS 0b00110101
+#define POPCOUNT __BITCOUNT__(FLAGS)         // numero de bits a 1
+
+// extension de signo: -80 en 8 bits -> -80 en 64 bits
+#define SIGNED8   0b10110000
+#define SIGN_EXT  __SIGNEXT__(SIGNED8, 8)
+
+@Format("velb")
+
+@SpaceAddress {
+    @Name("anonymous"),
+    @IniAddress(0x0000000000000000),
+    @EndAddress(0xFFFFFFFFFFFFFFFF)
+}
+
+@Section {
+    @Name("all"),
+    @SpaceAddress("anonymous")
+}
+
+@Import {
+    @Method { @Lib("stdlib/native/io/vesta_io") @Name("vio_print_int") }
+    @Method { @Lib("stdlib/native/io/vesta_io") @Name("vio_print_hex") }
+}
+
+code:
+    @InitPc(code)
+
+    getproc r14
+
+    // buffer size = 4096
+    mov r0, BUFFER_SIZE
+
+    // verificar bit 2 de FLAGS -> 1
+    mov r1, __BITTEST__(FLAGS, 2)       // r1 = 1
+
+    // popcount de FLAGS
+    mov r2, POPCOUNT                    // r2 = 4
+
+    // magic byte bajo
+    mov r3, MAGIC_LO                    // r3 = 239
+
+    // imprimir buffer size como entero (vio_print_int: r1=valor, r15=1, sin proc_ptr)
+    mov r1, BUFFER_SIZE
+    mov r15, 1
+    calln @Method("stdlib/native/io/vesta_io:vio_print_int")
+
+    // imprimir magic como hex (vio_print_hex: r1=valor, r15=1, sin proc_ptr)
+    mov r1, MAGIC
+    mov r15, 1
+    calln @Method("stdlib/native/io/vesta_io:vio_print_hex")
+
+    hlt
+end_code:
+
+align 16
+data:
+    buf_size    dw BUFFER_SIZE          // 4096
+    magic       dd MAGIC
+    magic_lo    db MAGIC_LO             // 239
+    magic_hi    db MAGIC_HI             // 190
+    magic_lw    dw MAGIC_LW             // 48879
+    magic_swap  dd MAGIC_SW
+    flags_byte  db FLAGS
+    popcount    db POPCOUNT
+    sign_ext    dq 0xFFFFFFFFFFFFFFB0    // SIGN_EXT(-80) en dos complemento
+end_data:

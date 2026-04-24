@@ -1,0 +1,74 @@
+// Ejemplo 14: #foreach VAR, IDX in ARRAY
+// La forma extendida de #foreach permite iterar con un indice numerico IDX
+// (base 0) ademas del valor VAR. IDX es un token NUMBER sustituido por el
+// preprocesador, util para calcular offsets, generar IDs y construir tablas.
+//
+// LIMITACION: IDX solo se sustituye como token STANDALONE.
+//   "entry_IDX:" -> etiqueta literal "entry_IDX" (IDX no se expande dentro de IDENT)
+//   "IDX"        -> se expande al numero 0, 1, 2, ...
+//   "__MUL__(IDX, 8)" -> correcto: IDX se expande antes de llamar __MUL__
+
+#define ENTRY_SIZE  8   // bytes por entrada en la tabla de saltos
+
+#array HANDLERS (read, write, seek, flush, close)
+#array REGS     (r0, r1, r2, r3)
+
+@Format("velb")
+
+@SpaceAddress {
+    @Name("anonymous"),
+    @IniAddress(0x0000000000000000),
+    @EndAddress(0xFFFFFFFFFFFFFFFF)
+}
+
+@Section {
+    @Name("all"),
+    @SpaceAddress("anonymous")
+}
+
+@Import {
+    @Method { @Lib("stdlib/native/io/vesta_io") @Name("vio_print_int") }
+}
+
+code:
+    @InitPc(code)
+
+    // demostrar que IDX se sustituye correctamente como token standalone
+    // y que __MUL__(IDX, ENTRY_SIZE) calcula el offset en preprocesado
+    #foreach HANDLER, IDX in HANDLERS
+    mov r0, IDX                        // 0, 1, 2, 3, 4
+    mov r1, __MUL__(IDX, ENTRY_SIZE)   // 0, 8, 16, 24, 32
+    #endforeach
+
+    // imprimir el offset del tercer handler: __MUL__(2, ENTRY_SIZE) = 16
+    mov r1, __MUL__(2, ENTRY_SIZE)
+    mov r15, 1
+    calln @Method("stdlib/native/io/vesta_io:vio_print_int")
+
+    // iterar con indice sobre registros para cargar valores escalonados
+    #foreach REG, IDX in REGS
+    mov r0, __MUL__(IDX, 4)   // r0 = 0, 4, 8, 12
+    #endforeach
+
+    hlt
+end_code:
+
+align 16
+data:
+    // tabla de offsets calculados en preprocesado: idx * ENTRY_SIZE
+    // la etiqueta "handler_IDX" se escribe literal (limitacion del token-paste)
+    // pero los valores son correctos
+    handler_offsets:
+    #foreach HANDLER, IDX in HANDLERS
+    dw __MUL__(IDX, ENTRY_SIZE)   // 0, 8, 16, 24, 32
+    #endforeach
+
+    // tabla de indices: simplemente los valores 0..N-1
+    handler_ids:
+    #foreach HANDLER, IDX in HANDLERS
+    db IDX   // 0, 1, 2, 3, 4
+    #endforeach
+
+    // verificacion: el ultimo handler tiene IDX = __ARRAY_SIZE__(HANDLERS) - 1
+    last_idx dw __SUB__(__ARRAY_SIZE__(HANDLERS), 1)   // -> 4
+end_data:
