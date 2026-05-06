@@ -461,6 +461,27 @@ PPToken PPLexer::scan_string(char delim) {
     SourceLocation l = loc();
     std::string s;
     s += advance(); // consume el delimitador de apertura
+    // Detectar triple-quoted ("""..."""): consume las dos comillas extras y
+    // lee hasta la siguiente secuencia """.  Permite saltos de linea
+    // dentro del literal.  Solo aplica al delimitador doble (no a chars).
+    if (delim == '"' && !at_end() && peek() == '"' && peek(1) == '"') {
+        s += advance(); // segunda comilla
+        s += advance(); // tercera comilla
+        while (!at_end()) {
+            if (peek() == '"' && peek(1) == '"' && peek(2) == '"') {
+                s += advance(); s += advance(); s += advance();
+                return PPToken(PPTokenType::STRING, std::move(s), l);
+            }
+            if (peek() == '\\') {
+                s += advance();
+                if (!at_end()) s += advance();
+            } else {
+                s += advance();
+            }
+        }
+        m_diag.error(l, "literal de cadena triple-quoted sin cerrar");
+        return PPToken(PPTokenType::STRING, std::move(s), l);
+    }
     while (!at_end() && peek() != delim && peek() != '\n') {
         if (peek() == '\\') {
             s += advance(); // consume '\'
