@@ -83,17 +83,17 @@ std::string Preprocessor::process(const std::string& source,
             bl, true));
     }
 
-    // fase 1: tokenizar
+    //   tokenizar
     PPLexer lexer(source, filename, m_diag, m_opts.lexer);
     auto tokens = lexer.tokenize();
 
-    // fase 2: parsear el AST
+    //   parsear el AST
     PPParser parser(std::move(tokens), m_diag);
     auto ast = parser.parse();
 
     if (m_diag.has_errors()) return "";
 
-    // fase 3: evaluar el AST produciendo el texto de salida
+    //   evaluar el AST produciendo el texto de salida
     std::string output;
     output.reserve(source.size());
 
