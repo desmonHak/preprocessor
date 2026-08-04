@@ -167,7 +167,9 @@ private:
     /**
      * @brief Salta un comentario de bloque (desde / * hasta * /).
      */
-    void skip_block_comment();
+    /// Se come un comentario de bloque y devuelve cuantos saltos de linea
+    /// ocupaba, para que quien llama los reponga (ver la implementacion).
+    size_t skip_block_comment();
 
     /**
      * @brief Salta espacios y tabulaciones sin saltar saltos de linea.

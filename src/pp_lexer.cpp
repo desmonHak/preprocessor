@@ -201,7 +201,10 @@ void PPLexer::scan_directive_line(std::vector<PPToken>& out) {
         }
         // manejar comentarios de bloque
         if (peek() == '/' && peek(1) == '*' && m_opts.strip_block_comments) {
-            skip_block_comment();
+            // Mismas lineas que ocupaba, repuestas (ver scan_text_line).
+            const size_t saltos = skip_block_comment();
+            for (size_t k = 0; k < saltos; ++k)
+                out.emplace_back(PPTokenType::TEXT, "\n", loc());
             continue;
         }
         // escanear el siguiente token no-espacio
@@ -240,7 +243,13 @@ void PPLexer::scan_text_line(std::vector<PPToken>& out) {
         // manejar comentarios de bloque
         if (peek() == '/' && peek(1) == '*' && m_opts.strip_block_comments) {
             flush_text();
-            skip_block_comment();
+            const size_t saltos = skip_block_comment();
+            /* Las lineas que ocupaba el comentario se reponen vacias.  El
+             * texto sobra, pero su SITIO no: sin esto todo lo de abajo se
+             * corre hacia arriba y cualquier mensaje que cite una linea cita
+             * la equivocada. */
+            for (size_t k = 0; k < saltos; ++k) text_buf += '\n';
+            flush_text();
             // el comentario de bloque puede continuar en la linea, no hacemos break
             text_start = loc();
             continue;
@@ -521,20 +530,32 @@ void PPLexer::skip_line_comment() {
     }
 }
 
-void PPLexer::skip_block_comment() {
+/**
+ * @brief Cuantos saltos de linea ocupaba el comentario que se acaba de comer.
+ *
+ * Quien lo llama los repone en la salida.  Un comentario de bloque desaparece
+ * del texto, pero las lineas que ocupaba NO pueden desaparecer con el: todo lo
+ * que venga detras se correria hacia arriba y cada mensaje del compilador --
+ * y cada traza de un fallo -- senalaria una linea que no es.  En un fichero
+ * documentado el desfase es de decenas de lineas.
+ */
+size_t PPLexer::skip_block_comment() {
     SourceLocation start = loc();
+    size_t saltos = 0;
     advance(); // consume '/'
     advance(); // consume '*'
     while (!at_end()) {
         if (peek() == '*' && peek(1) == '/') {
             advance(); // '*'
             advance(); // '/'
-            return;
+            return saltos;
         }
+        if (peek() == '\n') ++saltos;
         advance();
     }
     // si llegamos aqui, el comentario no fue cerrado
     m_diag.error(start, "comentario de bloque sin cerrar al final del archivo");
+    return saltos;
 }
 
 void PPLexer::skip_inline_whitespace() {
