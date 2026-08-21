@@ -292,6 +292,14 @@ void Preprocessor::eval_include(const IncludeNode& node, std::string& output) {
         const auto* block = static_cast<const BlockNode*>(ast.get());
         // empujar la ruta del include a la pila para que #pragma once pueda identificar el archivo
         m_include_stack.push_back(node.path);
+        /* Y ademas se APUNTA, que no es lo mismo: la pila se vacia al salir y
+         * esto tiene que sobrevivir a todo el preproceso.  Es lo que permite
+         * que un cache sepa que este fuente depende de aquel fichero.  Se
+         * comprueba antes de anadir porque el mismo se puede incluir desde
+         * varios sitios y la lista es para consultarla, no para contar. */
+        if (std::find(m_included_files.begin(), m_included_files.end(), node.path) ==
+            m_included_files.end())
+            m_included_files.push_back(node.path);
         eval_block(*block, output);
         m_include_stack.pop_back();
     }

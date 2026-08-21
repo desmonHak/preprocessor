@@ -93,6 +93,20 @@ public:
     std::string process_file(const std::string& filepath);
 
     /**
+     * @brief Los ficheros que este fuente incluyo, en orden y sin repetir.
+     *
+     * Quien cachea el resultado de compilar necesita saber DE QUE depende, y
+     * un `#include` es una dependencia igual que un `import`: si cambia, lo
+     * compilado deja de valer.  Sin esto, un cache serviria el artefacto viejo
+     * -- que no da error, da un resultado que ya no corresponde al codigo.
+     *
+     * @return Rutas tal como se resolvieron.
+     */
+    const std::vector<std::string>& included_files() const noexcept {
+        return m_included_files;
+    }
+
+    /**
      * @brief Acceso a las opciones del preprocesador (modificables antes de process).
      * @return Referencia a las opciones.
      */
@@ -139,6 +153,16 @@ private:
     IncludeResolver    m_resolver;      ///< Resolvedor de includes
     std::unordered_set<std::string> m_include_guard_once; ///< Archivos con #pragma once
     std::vector<std::string>        m_include_stack;      ///< Pila de archivos en proceso
+    /**
+     * @brief TODOS los ficheros incluidos, no solo los que estan en curso.
+     *
+     * La pila de arriba sirve para `#pragma once` y se vacia al salir de cada
+     * uno.  Esto es otra cosa: la lista de lo que este fuente LEYO, que es lo
+     * que un cache necesita para saber cuando deja de valer.  Sin ella, tocar
+     * un fichero incluido no invalida nada y se sirve un artefacto viejo -- un
+     * fallo que no da error, da un resultado que ya no corresponde al codigo.
+     */
+    std::vector<std::string>        m_included_files;
 
     // Contadores para macros dinamicas
     uint32_t m_counter; ///< Valor actual de __COUNTER__
