@@ -327,12 +327,6 @@ private:
      */
     std::string resolve_include(const IncludeNode& node);
 
-    /**
-     * @brief Actualiza las macros dinamicas __FILE__, __LINE__, __COUNTER__.
-     * @param file Nombre de archivo actual.
-     * @param line Numero de linea actual.
-     */
-    void update_dynamic_macros(const std::string& file, uint32_t line);
 };
 
 } // namespace vpp

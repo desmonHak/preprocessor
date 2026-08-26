@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <ctime>
 #include <cstdio>
+#include <iostream>
 #ifdef _WIN32
     // Dispositivo nulo con el que se alimenta la entrada de los comandos, para
     // que uno que lea de stdin termine en vez de quedarse colgado.
@@ -315,6 +316,10 @@ void Preprocessor::eval_text(const TextNode& node, std::string& output) {
         }
         return;
     }
+    // Posicion en curso, de donde salen __FILE__ y __LINE__.  Se fija por nodo
+    // porque es la unidad que corresponde a una linea del fuente.
+    m_macros.set_source_position(node.loc.file, node.loc.line);
+
     // expansion de macros: los tokens IDENT son candidatos a expansion
     auto expanded = m_macros.expand(node.tokens, node.loc);
     for (const auto& t : expanded) {
@@ -334,22 +339,57 @@ void Preprocessor::eval_define(const DefineNode& node) {
 }
 
 void Preprocessor::eval_include(const IncludeNode& node, std::string& output) {
+    // Ruta a traves de macros: `#include CABECERA`.  El parser dejo los tokens
+    // sin resolver porque no ve la tabla; se expanden aqui y el resultado tiene
+    // que formar "..." o <...>, igual que si se hubiera escrito literalmente.
+    std::string ruta      = node.path;
+    bool        es_sistema = node.is_system;
+
+    if (!node.path_tokens.empty()) {
+        auto expandidos = m_macros.expand(node.path_tokens, node.loc);
+
+        std::string texto;
+        for (const auto& t : expandidos) {
+            if (t.type == PPTokenType::PP_EOF) break;
+            if (t.type == PPTokenType::WHITESPACE ||
+                t.type == PPTokenType::NEWLINE) continue;
+            texto += t.value;
+        }
+
+        if (texto.size() >= 2 && texto.front() == '"' && texto.back() == '"') {
+            ruta       = texto.substr(1, texto.size() - 2);
+            es_sistema = false;
+        } else if (texto.size() >= 2 && texto.front() == '<' &&
+                                        texto.back()  == '>') {
+            ruta       = texto.substr(1, texto.size() - 2);
+            es_sistema = true;
+        } else {
+            m_diag.error(node.loc,
+                "#include requiere \"archivo\" o <archivo>; tras expandir "
+                "macros quedo: " + texto);
+            return;
+        }
+    }
+
     // verificar que el archivo no haya sido incluido con #pragma once
-    if (m_include_guard_once.count(node.path)) return;
+    if (m_include_guard_once.count(ruta)) return;
 
     // #import tiene semantica auto-once: registrar el modulo antes de procesarlo
     // para que importaciones circulares o duplicadas sean silenciosamente ignoradas
     if (node.is_import) {
-        m_include_guard_once.insert(node.path);
+        m_include_guard_once.insert(ruta);
     }
 
     // resolver el contenido del archivo
-    std::string content = resolve_include(node);
+    // Se construye un nodo con la ruta ya resuelta: resolve_include lee de el,
+    // y la ruta puede venir de expandir macros y no del texto original.
+    IncludeNode resuelto(node.loc, ruta, es_sistema, node.is_import);
+    std::string content = resolve_include(resuelto);
     if (content.empty() && m_diag.has_errors()) return;
 
     if (m_opts.emit_line_markers) {
         output += "#line 1 \"";
-        output += node.path;
+        output += ruta;
         output += "\"\n";
     }
 
@@ -364,22 +404,22 @@ void Preprocessor::eval_include(const IncludeNode& node, std::string& output) {
     // con el motor de diagnosticos compartido
 
     // procesamiento inline del include compartiendo el estado de macros
-    PPLexer lexer(content, node.path, m_diag, m_opts.lexer);
+    PPLexer lexer(content, ruta, m_diag, m_opts.lexer);
     auto tokens = lexer.tokenize();
     PPParser parser(std::move(tokens), m_diag);
     auto ast = parser.parse();
     if (!m_diag.has_errors()) {
         const auto* block = static_cast<const BlockNode*>(ast.get());
         // empujar la ruta del include a la pila para que #pragma once pueda identificar el archivo
-        m_include_stack.push_back(node.path);
+        m_include_stack.push_back(ruta);
         /* Y ademas se APUNTA, que no es lo mismo: la pila se vacia al salir y
          * esto tiene que sobrevivir a todo el preproceso.  Es lo que permite
          * que un cache sepa que este fuente depende de aquel fichero.  Se
          * comprueba antes de anadir porque el mismo se puede incluir desde
          * varios sitios y la lista es para consultarla, no para contar. */
-        if (std::find(m_included_files.begin(), m_included_files.end(), node.path) ==
+        if (std::find(m_included_files.begin(), m_included_files.end(), ruta) ==
             m_included_files.end())
-            m_included_files.push_back(node.path);
+            m_included_files.push_back(ruta);
         eval_block(*block, output);
         m_include_stack.pop_back();
     }
@@ -529,6 +569,8 @@ void Preprocessor::eval_repeat(const RepeatNode& node, std::string& output) {
 
 bool Preprocessor::eval_condition(const std::vector<PPToken>& tokens,
                                    const SourceLocation& loc) {
+    // una condicion puede usar __LINE__, asi que tambien necesita la posicion
+    m_macros.set_source_position(loc.file, loc.line);
     PPEvaluator eval(m_macros, m_diag);
     return eval.evaluate(tokens, loc) != 0;
 }
@@ -740,17 +782,5 @@ void Preprocessor::eval_macro(const MacroBlockNode& node) {
     m_macros.define(std::move(def));
 }
 
-void Preprocessor::update_dynamic_macros(const std::string& file, uint32_t line) {
-    SourceLocation l("<builtin>", 0, 0);
-    // actualizar __FILE__
-    m_macros.define(MacroDef("__FILE__",
-        {PPToken(PPTokenType::STRING, "\"" + file + "\"", l)}, l, true));
-    // actualizar __LINE__
-    m_macros.define(MacroDef("__LINE__",
-        {PPToken(PPTokenType::NUMBER, std::to_string(line), l)}, l, true));
-    // actualizar __COUNTER__
-    m_macros.define(MacroDef("__COUNTER__",
-        {PPToken(PPTokenType::NUMBER, std::to_string(m_counter++), l)}, l, true));
-}
 
 } // namespace vpp

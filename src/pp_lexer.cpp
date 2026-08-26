@@ -3,6 +3,7 @@
  * @brief Implementacion del lexer del preprocesador vpp.
  */
 
+#include <iostream>
 #include "preprocessor/pp_lexer.h"
 #include <cctype>
 #include <stdexcept>
@@ -165,6 +166,7 @@ void PPLexer::scan_directive_line(std::vector<PPToken>& out) {
 
     // consumir el '#' de la directiva
     SourceLocation hash_loc = loc();
+
     advance(); // consume '#'
 
     // verificar si es '##' (pegado de tokens, raro al inicio de linea pero valido)

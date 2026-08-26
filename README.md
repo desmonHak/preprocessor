@@ -36,6 +36,18 @@ codigo durante el preprocesado.
 | `__VPP_VERSION_MAJOR__`  | Version mayor del preprocesador (e.g. `1`)  |
 | `__VPP_VERSION_MINOR__`  | Version menor del preprocesador (e.g. `0`)  |
 
+El valor de `__FILE__` y `__LINE__` se resuelve en el momento de EXPANDIR, no
+al arrancar, de modo que dentro del cuerpo de una macro dan la posicion donde se
+**invoca** y no donde se definio -- que es justo para lo que sirven:
+
+```
+#define AQUI __FILE__ ":" __LINE__
+x = AQUI          // -> "prog.c" ":" 2
+```
+
+`__COUNTER__` se consume por expansion, asi que dos usos en la misma linea dan
+valores distintos.
+
 ### Directivas soportadas
 
 ```

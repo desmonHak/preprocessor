@@ -159,6 +159,16 @@ struct IncludeNode : ASTNode {
     bool        is_import;   ///< true si es #import (semantica auto-once + import_paths)
 
     /**
+     * @brief Tokens de la ruta cuando hay que expandir macros para conocerla.
+     *
+     * `#include CABECERA` es valido en C: los tokens que siguen se expanden y
+     * el resultado debe formar "..." o <...>.  El parser no puede resolverlo
+     * porque no ve la tabla de macros, asi que los guarda aqui y la decision se
+     * aplaza a la evaluacion.  Vacio cuando la ruta venia escrita literalmente.
+     */
+    std::vector<PPToken> path_tokens;
+
+    /**
      * @brief Constructor.
      * @param l      Ubicacion de la directiva.
      * @param p      Ruta del archivo.

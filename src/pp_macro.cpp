@@ -1654,6 +1654,41 @@ static std::vector<PPToken> expand_impl(
     size_t pos = 0;
     while (pos < tokens.size()) {
         if (tokens[pos].type == PPTokenType::IDENT) {
+            // Las tres macros dinamicas se resuelven AQUI y no en la tabla,
+            // porque su valor no es fijo: depende de donde y cuando se
+            // expanden.  Registrarlas como macros normales -- que es lo que se
+            // hacia -- las dejaba congeladas en el valor con el que nacieron,
+            // de ahi que __LINE__ diera siempre 0 y __COUNTER__ nunca subiera.
+            //
+            // La posicion sale del estado de la tabla y no del token, para que
+            // un __LINE__ escrito DENTRO del cuerpo de una macro de la linea
+            // donde se invoca y no donde se definio.  Es justo el caso para el
+            // que se usa: `#define LOG(x) fprintf(f, "%s:%d", __FILE__, __LINE__)`.
+            const std::string& name = tokens[pos].value;
+            if (name == "__LINE__") {
+                result.emplace_back(PPTokenType::NUMBER,
+                                    std::to_string(table.current_line()),
+                                    tokens[pos].loc);
+                ++pos;
+                continue;
+            }
+            if (name == "__FILE__") {
+                result.emplace_back(PPTokenType::STRING,
+                                    "\"" + table.current_file() + "\"",
+                                    tokens[pos].loc);
+                ++pos;
+                continue;
+            }
+            if (name == "__COUNTER__") {
+                // se consume por EXPANSION: dos usos en la misma linea tienen
+                // que dar valores distintos
+                result.emplace_back(PPTokenType::NUMBER,
+                                    std::to_string(table.next_counter()),
+                                    tokens[pos].loc);
+                ++pos;
+                continue;
+            }
+
             auto exp = expand_one_impl(tokens, pos, table, guard);
             result.insert(result.end(), exp.begin(), exp.end());
         } else {

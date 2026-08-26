@@ -3,6 +3,7 @@
  * @brief Implementacion del parser del preprocesador vpp.
  */
 
+#include <iostream>
 #include "preprocessor/pp_parser.h"
 #include <stdexcept>
 #include <sstream>
@@ -53,7 +54,17 @@ PPToken PPParser::consume() {
     if (m_pos >= m_toks.size()) {
         return PPToken(PPTokenType::PP_EOF, "", {});
     }
-    return std::move(m_toks[m_pos++]);
+    // Se devuelve una COPIA, no un `std::move` del elemento del vector.
+    //
+    // Mover dejaba el token vaciado dentro de m_toks, y el parser SI vuelve
+    // atras: para distinguir una directiva de cierre mira hacia delante
+    // consumiendo y despues restaura m_pos.  Al repasar esos tokens ya estaban
+    // gutted, y como el `type` no se mueve pero las cadenas si, el sintoma era
+    // que un token conservaba su tipo y perdia su texto y su ubicacion.  De ahi
+    // que el nodo de #include naciera sin fichero y que
+    // `#include "vecino.h"` no resolviera nunca relativo al fichero que lo
+    // incluye: la ruta base salia de una cadena vacia.
+    return m_toks[m_pos++];
 }
 
 PPToken PPParser::expect(PPTokenType t, const char* msg) {
@@ -351,9 +362,18 @@ NodePtr PPParser::parse_include(SourceLocation hash_loc) {
         is_system = true;
         consume();
     } else {
-        m_diag.error(cur().loc, "#include requiere \"archivo\" o <archivo>");
+        // La ruta no viene escrita literalmente: puede ser una macro que se
+        // expanda a "..." o a <...>, que el estandar admite.  Aqui no se puede
+        // resolver -- el parser no ve la tabla de macros -- asi que se guardan
+        // los tokens y se decide al evaluar.  Si al expandirlos tampoco sale
+        // una ruta, el error se emite alli, con lo que ya se sabe en que
+        // quedaron.
+        auto node = std::make_unique<IncludeNode>(hash_loc, std::string(), false);
+        while (!check(PPTokenType::NEWLINE) && !check(PPTokenType::PP_EOF)) {
+            node->path_tokens.push_back(consume());
+        }
         consume_rest_of_line();
-        return nullptr;
+        return node;
     }
 
     consume_rest_of_line();

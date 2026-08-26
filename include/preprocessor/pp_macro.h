@@ -272,11 +272,50 @@ public:
         const std::vector<std::string>& params,
         const std::vector<std::vector<PPToken>>& args);
 
+    /**
+     * @brief Fija la posicion del fuente que se esta expandiendo.
+     *
+     * De aqui salen __FILE__ y __LINE__.  Se toma la posicion ACTUAL y no la
+     * del token, porque un __LINE__ escrito dentro del cuerpo de una macro
+     * debe dar la linea donde se INVOCA, no donde se definio -- que es
+     * justamente para lo que se usa.
+     *
+     * @param file Fichero en curso.
+     * @param line Linea en curso.
+     */
+    void set_source_position(const std::string& file, uint32_t line) {
+        m_cur_file = file;
+        m_cur_line = line;
+    }
+
 private:
     std::unordered_map<std::string, MacroDef>              m_table;        ///< Macros definidas
     std::unordered_map<std::string, std::vector<std::string>> m_arrays;    ///< Arrays definidos
     std::unordered_map<std::string, BuiltinFnHandler>      m_builtin_fns;  ///< Macros funcion del sistema
     DiagnosticEngine&                                      m_diag;         ///< Motor de diagnosticos
+
+    std::string m_cur_file;          ///< Fichero en curso, para __FILE__
+    uint32_t    m_cur_line = 0;      ///< Linea en curso, para __LINE__
+    uint32_t    m_counter  = 0;      ///< Siguiente valor de __COUNTER__
+
+public:
+    /**
+     * @brief Devuelve el valor de __COUNTER__ y lo incrementa.
+     *
+     * Se consume en la EXPANSION y no por linea, que es lo que hace util a
+     * __COUNTER__: dos usos en la misma linea tienen que dar valores distintos.
+     *
+     * @return Valor actual, antes de incrementar.
+     */
+    uint32_t next_counter() { return m_counter++; }
+
+    /** @brief Fichero en curso. @return Nombre del fichero. */
+    const std::string& current_file() const noexcept { return m_cur_file; }
+
+    /** @brief Linea en curso. @return Numero de linea. */
+    uint32_t current_line() const noexcept { return m_cur_line; }
+
+private:
 
     /**
      * @brief Registra todas las macros funcion predefinidas del sistema.
