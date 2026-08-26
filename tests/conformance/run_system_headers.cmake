@@ -71,6 +71,38 @@ execute_process(
     RESULT_VARIABLE pp_rc)
 
 if(NOT pp_rc EQUAL 0)
+    # Se imprime el CONTEXTO de cada error, no solo su ubicacion.  Esta prueba
+    # corre sobre las cabeceras de la maquina, que cambian con el sistema y con
+    # la version del compilador, asi que cuando falla en un CI no hay forma de
+    # ir a mirar el fichero: si la prueba no trae la linea culpable consigo, el
+    # informe no sirve para arreglar nada.
+    string(REPLACE "\n" ";" _errs "${pp_err}")
+    foreach(_e IN LISTS _errs)
+        if(_e MATCHES "^[ \t]*([^:]+):([0-9]+):[0-9]+: error")
+            set(_f "${CMAKE_MATCH_1}")
+            set(_n "${CMAKE_MATCH_2}")
+            # la ruta del error es relativa; se busca en las de inclusion
+            foreach(_inc IN LISTS INC_ARGS)
+                string(REGEX REPLACE "^-I" "" _dir "${_inc}")
+                file(GLOB_RECURSE _cand "${_dir}/${_f}")
+                if(_cand)
+                    list(GET _cand 0 _ruta)
+                    file(STRINGS "${_ruta}" _lineas)
+                    math(EXPR _desde "${_n} - 2")
+                    math(EXPR _hasta "${_n} + 1")
+                    message(STATUS "--- ${_ruta}:${_n} ---")
+                    set(_i 1)
+                    foreach(_l IN LISTS _lineas)
+                        if(_i GREATER_EQUAL _desde AND _i LESS_EQUAL _hasta)
+                            message(STATUS "  ${_i}: ${_l}")
+                        endif()
+                        math(EXPR _i "${_i} + 1")
+                    endforeach()
+                    break()
+                endif()
+            endforeach()
+        endif()
+    endforeach()
     message(FATAL_ERROR
         "vpp fallo al preprocesar cabeceras del sistema (${pp_rc}):\n${pp_err}")
 endif()
