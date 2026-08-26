@@ -5,12 +5,15 @@
 .venv
 
 # CMake build directories
-cmake-build-debug
-cmake-build-release
-cmake-build-*
-build*
-build-windows
-build-linux
+# La barra final importa: sin ella, "build*" es un patron de FICHERO ademas de
+# directorio y a cualquier profundidad, asi que se tragaba cosas como
+# cmake/build_all_abis.bat o un futuro src/build_info.cpp -- ficheros fuente
+# que desaparecian del repo sin que nadie se diera cuenta.  Con la barra solo
+# casa con directorios.  Se evita ademas "build*/" a secas para no ignorar un
+# hipotetico directorio "builder/".
+cmake-build-*/
+build/
+build-*/
 
 # certificados y claves privadas
 *.pem
