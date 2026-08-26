@@ -1369,7 +1369,7 @@ que el estandar **exige**, y por eso podian estar en verde mientras
 
 | Suite | Que mide |
 | :---- | :------- |
-| `vpp_test_conformance` | 35 casos preprocesados con vpp y con `gcc`/`clang`, comparando las salidas |
+| `vpp_test_conformance` | 40 casos preprocesados con vpp y con `gcc`/`clang`, comparando las salidas |
 | `vpp_test_system_headers` | Preprocesa un fuente con cabeceras del sistema, **compila** la salida y **ejecuta** el binario |
 
 La comparacion es a nivel de **token**, no de linea: dos salidas con los mismos
@@ -1381,7 +1381,7 @@ Los casos que se sepa que fallan van en `tests/conformance/xfail.txt` con la
 explicacion de que falla.  Uno listado que falla no rompe la suite; uno que
 **pasa** se reporta como XPASS y si la rompe, para obligar a sacarlo de la lista
 al arreglar el bug.  Asi el fichero no puede quedarse mintiendo sobre el estado
-real.  Ahora mismo la lista esta vacia: 35/35.
+real.  Ahora mismo la lista esta vacia: 40/40.
 
 Las dos suites se registran solo si hay un compilador de referencia; sin el se
 omiten en vez de dar un rojo que no dice nada del codigo.

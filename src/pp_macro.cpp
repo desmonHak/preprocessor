@@ -2034,6 +2034,28 @@ std::vector<PPToken> MacroTable::apply_stringify(
             size_t j = i + 1;
             while (j < tokens.size() && tokens[j].type == PPTokenType::WHITESPACE) ++j;
             if (j < tokens.size() && tokens[j].type == PPTokenType::IDENT) {
+                // #__VA_ARGS__: se estringifica TODA la parte variadica, con
+                // sus comas incluidas.  No es un parametro con nombre, asi que
+                // la busqueda de abajo no lo encontraba y el # se colaba
+                // literal en la salida.
+                if (tokens[j].value == "__VA_ARGS__") {
+                    std::vector<PPToken> todos;
+                    for (size_t vi = params.size(); vi < args.size(); ++vi) {
+                        if (vi > params.size()) {
+                            todos.emplace_back(PPTokenType::COMMA, ",",
+                                               tokens[j].loc);
+                            todos.emplace_back(PPTokenType::WHITESPACE, " ",
+                                               tokens[j].loc);
+                        }
+                        todos.insert(todos.end(), args[vi].begin(),
+                                     args[vi].end());
+                    }
+                    result.push_back(make_string(tokens_raw(todos),
+                                                 tokens[i].loc));
+                    i = j + 1;
+                    continue;
+                }
+
                 auto it = std::find(params.begin(), params.end(), tokens[j].value);
                 if (it != params.end()) {
                     size_t idx = static_cast<size_t>(it - params.begin());
