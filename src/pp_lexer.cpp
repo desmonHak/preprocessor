@@ -62,9 +62,35 @@ const char* pp_token_type_name(PPTokenType t) {
 
 /* --- PPLexer -------------------------------------------------------------- */
 
+// @brief Deja el fuente con finales de linea de un solo caracter.
+//
+// El lexer trata el salto de linea como un token y usa la barra invertida
+// seguida de salto para empalmar lineas.  Con CRLF, el retorno de carro se
+// interponia: no contaba como blanco, rompia el empalme de lineas y se colaba
+// en la salida por duplicado.  Normalizar a la entrada lo arregla de una vez
+// para todo lo que viene despues, en lugar de tener que acordarse del retorno de carro en
+// cada sitio que mire un salto.  Se contempla tambien el CR suelto de los Mac
+// antiguos.
+//
+// @param s Fuente tal y como se leyo.
+// @return El mismo texto con saltos de linea normalizados.
+static std::string normalizar_saltos(std::string s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == 0x0D) {                       // retorno de carro
+            if (i + 1 < s.size() && s[i + 1] == 0x0A) ++i;   // CRLF
+            out += 0x0A;
+        } else {
+            out += s[i];
+        }
+    }
+    return out;
+}
+
 PPLexer::PPLexer(std::string source, std::string filename,
                  DiagnosticEngine& diag, LexerOptions opts)
-    : m_src(std::move(source))
+    : m_src(normalizar_saltos(std::move(source)))
     , m_file(std::move(filename))
     , m_diag(diag)
     , m_opts(opts)

@@ -295,7 +295,10 @@ if(VPP_BUILD_SHARED)
         # NINGUN simbolo C++ sale de ella -- si salieran, podrian interponerse
         # con los de la libstdc++ del programa anfitrion.  Aqui lo garantiza el
         # version script de arriba: la .so exporta 23 simbolos y todos son C.
-        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        # En macOS NO: el clang de Apple no acepta -static-libgcc, y ademas la
+        # libc++ viene con el sistema, asi que la dependencia no es un problema
+        # de distribucion como si lo es la libstdc++ en Linux.
+        if(NOT APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
             target_link_options(vpp_shared PRIVATE
                 -static-libgcc -static-libstdc++)
         endif()
@@ -310,7 +313,7 @@ if(VPP_BUILD_EXE)
 
     # Mismo motivo que en la biblioteca: el ejecutable viaja en el paquete base
     # y no debe exigir una libstdc++6 concreta del sistema donde se instale.
-    if(NOT WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    if(NOT WIN32 AND NOT APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_link_options(vpp PRIVATE -static-libgcc -static-libstdc++)
     endif()
 

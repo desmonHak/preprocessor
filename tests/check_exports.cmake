@@ -22,64 +22,105 @@ endif()
 
 # --- obtener la lista de simbolos exportados --------------------------------
 
-# Cada plataforma trae su herramienta; se prueba en orden y se usa la primera.
+# Se PRUEBAN todas las herramientas disponibles y se usa la primera que
+# devuelva algo, en lugar de elegir una por plataforma.  El formato de salida
+# varia entre versiones y entre distribuciones, y comprometerse con una sola
+# convierte una diferencia de formato en un fallo de la suite.
 find_program(NM_TOOL      nm)
 find_program(OBJDUMP_TOOL objdump)
 find_program(DUMPBIN_TOOL dumpbin)
 
 set(SIMBOLOS "")
+set(INTENTOS "")
 
-if(WIN32 AND OBJDUMP_TOOL)
-    # objdump -p lista la tabla de exportacion del PE
-    execute_process(COMMAND "${OBJDUMP_TOOL}" -p "${LIB}"
-                    OUTPUT_VARIABLE salida RESULT_VARIABLE rc)
-    if(NOT rc EQUAL 0)
-        message(FATAL_ERROR "objdump fallo sobre ${LIB}")
-    endif()
-    string(REPLACE "\n" ";" _lineas "${salida}")
+# @brief Extrae nombres de simbolos de la salida de una herramienta.
+# @param texto  Salida completa de la herramienta.
+# @param patron Expresion regular con UN grupo: el nombre.
+# @param dest   Variable donde acumular los nombres.
+function(extraer texto patron dest)
+    set(acc "${${dest}}")
+    string(REPLACE "\n" ";" _lineas "${texto}")
     foreach(_l IN LISTS _lineas)
-        # las entradas van como "  [  N] nombre"
-        if(_l MATCHES "^[ \t]*\\[[ \t]*[0-9]+\\][ \t]+([A-Za-z_][A-Za-z0-9_@?$]*)")
-            list(APPEND SIMBOLOS "${CMAKE_MATCH_1}")
+        if(_l MATCHES "${patron}")
+            list(APPEND acc "${CMAKE_MATCH_1}")
         endif()
     endforeach()
+    set(${dest} "${acc}" PARENT_SCOPE)
+endfunction()
 
-elseif(WIN32 AND DUMPBIN_TOOL)
-    execute_process(COMMAND "${DUMPBIN_TOOL}" /exports "${LIB}"
-                    OUTPUT_VARIABLE salida RESULT_VARIABLE rc)
-    string(REPLACE "\n" ";" _lineas "${salida}")
-    foreach(_l IN LISTS _lineas)
-        # "  ordinal  hint  RVA  nombre"
-        if(_l MATCHES "^[ \t]+[0-9]+[ \t]+[0-9A-Fa-f]+[ \t]+[0-9A-Fa-f]+[ \t]+([A-Za-z_?][A-Za-z0-9_@?$]*)")
-            list(APPEND SIMBOLOS "${CMAKE_MATCH_1}")
-        endif()
-    endforeach()
-
-elseif(NM_TOOL)
-    # -D: tabla dinamica; --defined-only: lo que la biblioteca APORTA, no lo
-    # que necesita de fuera
-    execute_process(COMMAND "${NM_TOOL}" -D --defined-only "${LIB}"
-                    OUTPUT_VARIABLE salida RESULT_VARIABLE rc)
-    if(NOT rc EQUAL 0)
-        message(FATAL_ERROR "nm fallo sobre ${LIB}")
-    endif()
-    string(REPLACE "\n" ";" _lineas "${salida}")
-    foreach(_l IN LISTS _lineas)
-        # "direccion TIPO nombre"; solo interesan los de codigo y datos
-        if(_l MATCHES "^[0-9A-Fa-f]+[ \t]+[TtDdBbWwRr][ \t]+([A-Za-z_][A-Za-z0-9_.$]*)")
-            list(APPEND SIMBOLOS "${CMAKE_MATCH_1}")
-        endif()
-    endforeach()
-
+# El orden depende de la plataforma: sobre un PE, `nm -D` no lista la tabla de
+# exportacion sino TODOS los simbolos del objeto -- miles -- asi que ahi hay que
+# ir a objdump o dumpbin.  Dentro de cada plataforma si se prueba una tras otra.
+if(WIN32)
+    set(USAR_NM OFF)
 else()
+    set(USAR_NM ON)
+endif()
+
+# nm -D: tabla dinamica de un ELF/Mach-O.  --defined-only deja fuera lo que la
+# biblioteca NECESITA, que no es lo que exporta.
+if(USAR_NM AND NM_TOOL AND NOT SIMBOLOS)
+    execute_process(COMMAND "${NM_TOOL}" -D --defined-only "${LIB}"
+                    OUTPUT_VARIABLE salida ERROR_QUIET RESULT_VARIABLE rc)
+    if(rc EQUAL 0)
+        # "direccion TIPO nombre"; en Mach-O el nombre lleva guion bajo delante
+        extraer("${salida}" "^[0-9A-Fa-f]+[ \t]+[TtDdBbWwRrSs][ \t]+(.+)$" SIMBOLOS)
+        list(APPEND INTENTOS "nm")
+    endif()
+endif()
+
+# objdump -p: tabla de exportacion de un PE.
+if(OBJDUMP_TOOL AND NOT SIMBOLOS)
+    execute_process(COMMAND "${OBJDUMP_TOOL}" -p "${LIB}"
+                    OUTPUT_VARIABLE salida ERROR_QUIET RESULT_VARIABLE rc)
+    if(rc EQUAL 0)
+        # Hay que ACOTAR a la seccion de nombres.  La salida de objdump -p trae
+        # tambien la tabla de reubicaciones, cuyas lineas acaban en "] DIR64" y
+        # encajan igual de bien en un patron generico: capturarlas daba miles de
+        # "simbolos" inexistentes.
+        string(REPLACE "
+" ";" _ls "${salida}")
+        set(_dentro OFF)
+        foreach(_l IN LISTS _ls)
+            if(_l MATCHES "Name Pointer")
+                set(_dentro ON)
+            elseif(_dentro)
+                if(_l MATCHES "^[ 	]*\[[ 	]*[0-9]+\][ 	]+([A-Za-z_][A-Za-z0-9_@?$]*)[ 	]*$")
+                    list(APPEND SIMBOLOS "${CMAKE_MATCH_1}")
+                else()
+                    set(_dentro OFF)   # se acabo la seccion
+                endif()
+            endif()
+        endforeach()
+        list(APPEND INTENTOS "objdump")
+    endif()
+endif()
+
+# dumpbin /exports: el equivalente de MSVC.
+if(DUMPBIN_TOOL AND NOT SIMBOLOS)
+    execute_process(COMMAND "${DUMPBIN_TOOL}" /exports "${LIB}"
+                    OUTPUT_VARIABLE salida ERROR_QUIET RESULT_VARIABLE rc)
+    if(rc EQUAL 0)
+        extraer("${salida}" "^[ \t]+[0-9]+[ \t]+[0-9A-Fa-f]+[ \t]+[0-9A-Fa-f]+[ \t]+([A-Za-z_?][A-Za-z0-9_@?$]*)" SIMBOLOS)
+        list(APPEND INTENTOS "dumpbin")
+    endif()
+endif()
+
+if(NOT INTENTOS)
     message(STATUS "sin nm, objdump ni dumpbin: no se puede comprobar; se omite")
     return()
 endif()
 
 if(NOT SIMBOLOS)
+    # Se falla, no se omite: una comprobacion que no lee la tabla no comprueba
+    # nada, y darla por buena seria peor que no tenerla.  Se vuelca lo que vio
+    # la herramienta, porque este script corre sobre todo en maquinas de CI
+    # donde no se puede depurar a mano.
+    message(STATUS "herramientas probadas: ${INTENTOS}")
+    string(SUBSTRING "${salida}" 0 1200 _muestra)
+    message(STATUS "primeros bytes de la salida:\n${_muestra}")
     message(FATAL_ERROR
-        "no se extrajo ningun simbolo de ${LIB}; la comprobacion no vale de "
-        "nada si no lee la tabla, asi que se falla en vez de dar un falso ok")
+        "no se extrajo ningun simbolo de ${LIB}")
 endif()
 
 # --- veredicto ---------------------------------------------------------------
@@ -90,9 +131,8 @@ set(N_VPP 0)
 foreach(sym IN LISTS SIMBOLOS)
     if(sym MATCHES "^_?vpp_")
         math(EXPR N_VPP "${N_VPP} + 1")
-    # Los auxiliares que el propio enlazador mete en un PE no son codigo
-    # nuestro y no cuentan.
-    elseif(sym MATCHES "^(_head_|__imp_|.*_dll_iname$|_DllMain)")
+    # Lo que mete el propio enlazador en un PE no es codigo nuestro.
+    elseif(sym MATCHES "^(_head_|__imp_|_DllMain)" OR sym MATCHES "_dll_iname$")
         # ruido del enlazador de Windows
     else()
         list(APPEND AJENOS "${sym}")
@@ -115,4 +155,4 @@ if(N_VPP EQUAL 0)
     message(FATAL_ERROR "la biblioteca no exporta NINGUNA funcion vpp_*")
 endif()
 
-message(STATUS "exporta ${N_VPP} funciones del ABI en C y nada mas")
+message(STATUS "exporta ${N_VPP} funciones del ABI en C y nada mas (via ${INTENTOS})")
