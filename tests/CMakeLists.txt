@@ -70,6 +70,20 @@ else()
     message(STATUS "  Conformidad   : sin compilador de referencia; test omitido")
 endif()
 
+# --- la biblioteca compartida solo exporta el ABI en C ---------------------
+#
+# Es la invariante que sostiene todo el diseno: en cuanto se escapa un simbolo
+# de C++, la biblioteca deja de ser consumible desde otro compilador.  Ya paso
+# una vez en ELF -- se colaron 9 plantillas de libstdc++ pese a la visibilidad
+# oculta -- asi que se comprueba en cada build en lugar de a mano.
+if(TARGET vpp_shared)
+    add_test(NAME vpp_test_exports
+        COMMAND ${CMAKE_COMMAND}
+            -DLIB=$<TARGET_FILE:vpp_shared>
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/check_exports.cmake)
+    set_tests_properties(vpp_test_exports PROPERTIES TIMEOUT 60)
+endif()
+
 # --- target de conveniencia para correr todos los tests --------------------
 
 add_custom_target(vpp_run_tests

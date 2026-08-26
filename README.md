@@ -1360,6 +1360,30 @@ ctest --output-on-failure -V
 ./vpp_test_float_conv      ; macros de flotantes y conversion numerica
 ```
 
+### Integracion continua
+
+Cada push a `master` o `develop` compila y pasa la suite completa.  La
+matriz no es simetrica por capricho: cada entrada cubre algo que las demas no.
+
+| Trabajo | Que cubre |
+| :------ | :-------- |
+| `linux-gcc` | ELF, glibc y el version script que recorta los simbolos |
+| `macos-clang` | Mach-O y su lista de simbolos exportados |
+| `windows-msvc` | La rama MSVC del CMake y su forma de nombrar las bibliotecas |
+| `windows-mingw` | El toolchain con el que se construye de verdad en Windows |
+| `consumidor-externo` | Enlaza desde un proyecto en C PURO, por `find_package` y por `pkg-config` |
+
+El ultimo merece explicacion: compilar el propio vpp no demuestra que el ABI en
+C sirva.  Ese trabajo monta un proyecto que no tiene NADA de C++ -- ni siquiera
+el lenguaje habilitado en su `project()` -- y comprueba que enlaza y ejecuta.
+
+Hay ademas un test, `vpp_test_exports`, que verifica que la biblioteca compartida
+exporta UNICAMENTE el ABI en C.  Es la invariante que sostiene el diseno, y no
+es una precaucion teorica: en ELF ya se colaron nueve plantillas de libstdc++
+pese a tener la visibilidad oculta, y por eso hizo falta el version script.
+
+---
+
 ### Conformidad con el preprocesador de C
 
 Ademas de los tests unitarios hay dos suites cuyo oraculo es un compilador de
