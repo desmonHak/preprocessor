@@ -123,8 +123,37 @@ execute_process(
     RESULT_VARIABLE cc_rc2)
 
 if(NOT cc_rc2 EQUAL 0)
+    # Mismo motivo que en el paso anterior, y con mas razon: el fichero que no
+    # compila lo genera la propia prueba y solo existe en la maquina que la
+    # ejecuta, asi que sin traerse las lineas culpables un fallo en un CI no se
+    # puede diagnosticar sin reproducir el entorno entero.
+    file(STRINGS "${PP_OUT}" _pplineas)
+    list(LENGTH _pplineas _pptotal)
+    string(REPLACE "
+" ";" _cerrs "${cc_err}")
+    set(_ya "")
+    foreach(_e IN LISTS _cerrs)
+        if(_e MATCHES "sys_headers\.pp\.c:([0-9]+):")
+            set(_n "${CMAKE_MATCH_1}")
+            list(FIND _ya "${_n}" _visto)
+            if(_visto EQUAL -1)
+                list(APPEND _ya "${_n}")
+                math(EXPR _desde "${_n} - 2")
+                math(EXPR _hasta "${_n} + 1")
+                message(STATUS "--- salida generada, linea ${_n} de ${_pptotal} ---")
+                set(_i 1)
+                foreach(_l IN LISTS _pplineas)
+                    if(_i GREATER_EQUAL _desde AND _i LESS_EQUAL _hasta)
+                        message(STATUS "  ${_i}: ${_l}")
+                    endif()
+                    math(EXPR _i "${_i} + 1")
+                endforeach()
+            endif()
+        endif()
+    endforeach()
     message(FATAL_ERROR
-        "la salida de vpp no compila (${cc_rc2}):\n${cc_err}")
+        "la salida de vpp no compila (${cc_rc2}):
+${cc_err}")
 endif()
 
 execute_process(
