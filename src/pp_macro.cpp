@@ -1844,6 +1844,18 @@ std::vector<std::vector<PPToken>> MacroTable::collect_args(
             arg.pop_back();
     }
 
+    // `F()` sobre una macro SIN parametros es una llamada sin argumentos, no
+    // una llamada con un argumento vacio.  El bucle de arriba empuja el
+    // argumento en curso al cerrar el parentesis aunque este vacio, asi que hay
+    // que deshacer ese caso o la cuenta da 1 frente a 0 y se rechaza una
+    // llamada perfectamente valida.  No es un caso rebuscado: las cabeceras del
+    // SDK de macOS usan `_LIBC_SINGLE_BY_DEFAULT()`, definida asi, y sin esto
+    // no se puede preprocesar ni un <stdio.h>.
+    if (mac.params.empty() && !mac.is_variadic &&
+        args.size() == 1 && args[0].empty()) {
+        args.clear();
+    }
+
     // verificar numero de argumentos
     size_t expected = mac.params.size();
     if (mac.is_variadic && expected > 0) --expected; // el '...' no cuenta como param fijo
