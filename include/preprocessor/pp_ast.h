@@ -37,7 +37,7 @@ enum class NodeKind : uint8_t {
     EXEC_DIR,       ///< Directiva #exec: ejecuta un comando del sistema
     SET_DIR,        ///< Directiva #set: asigna o modifica una variable
     ASSERT_DIR,     ///< Directiva #assert: comprueba una condicion en preprocesado
-    MACRO_BLOCK     ///< Bloque #macro ... #endmacro: macro funcion multilínea
+    MACRO_BLOCK     ///< Bloque #macro ... #endmacro: macro funcion multilinea
 };
 
 /* --- clase base ----------------------------------------------------------- */

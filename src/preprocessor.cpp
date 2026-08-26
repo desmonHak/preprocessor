@@ -264,6 +264,16 @@ void Preprocessor::eval_node(const ASTNode& node, std::string& output) {
 
         case NodeKind::LINE_DIR: {
             const auto& n = static_cast<const LineDirNode&>(node);
+
+            // Instalar el remapeo: la linea SIGUIENTE a la directiva pasa a ser
+            // la que indica.  Antes esto solo re-emitia el marcador y no movia
+            // __LINE__ ni __FILE__, con lo que la directiva no servia para lo
+            // que existe: que el codigo generado apunte a su fuente original.
+            m_line_remap_active = true;
+            m_line_base_phys    = n.loc.line + 1;
+            m_line_base_rep     = n.line_num;
+            if (!n.filename.empty()) m_line_remap_file = n.filename;
+
             // emitir marcador de linea si esta habilitado
             if (m_opts.emit_line_markers) {
                 output += "#line ";
@@ -308,6 +318,16 @@ void Preprocessor::eval_node(const ASTNode& node, std::string& output) {
     }
 }
 
+SourceLocation Preprocessor::mapped_position(const SourceLocation& real) const {
+    if (!m_line_remap_active) return real;
+
+    SourceLocation out = real;
+    if (!m_line_remap_file.empty()) out.file = m_line_remap_file;
+    // diferencia respecto al punto donde se instalo el remapeo
+    out.line = m_line_base_rep + (real.line - m_line_base_phys);
+    return out;
+}
+
 void Preprocessor::eval_text(const TextNode& node, std::string& output) {
     if (!m_opts.expand_macros) {
         // sin expansion: emitir el texto tal cual
@@ -317,8 +337,10 @@ void Preprocessor::eval_text(const TextNode& node, std::string& output) {
         return;
     }
     // Posicion en curso, de donde salen __FILE__ y __LINE__.  Se fija por nodo
-    // porque es la unidad que corresponde a una linea del fuente.
-    m_macros.set_source_position(node.loc.file, node.loc.line);
+    // porque es la unidad que corresponde a una linea del fuente, y pasa por
+    // el remapeo para que un `#line` en vigor se note.
+    const SourceLocation pos = mapped_position(node.loc);
+    m_macros.set_source_position(pos.file, pos.line);
 
     // expansion de macros: los tokens IDENT son candidatos a expansion
     auto expanded = m_macros.expand(node.tokens, node.loc);
@@ -570,7 +592,8 @@ void Preprocessor::eval_repeat(const RepeatNode& node, std::string& output) {
 bool Preprocessor::eval_condition(const std::vector<PPToken>& tokens,
                                    const SourceLocation& loc) {
     // una condicion puede usar __LINE__, asi que tambien necesita la posicion
-    m_macros.set_source_position(loc.file, loc.line);
+    const SourceLocation pos = mapped_position(loc);
+    m_macros.set_source_position(pos.file, pos.line);
     PPEvaluator eval(m_macros, m_diag);
     return eval.evaluate(tokens, loc) != 0;
 }

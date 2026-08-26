@@ -207,6 +207,26 @@ private:
      */
     std::vector<std::string>        m_included_files;
 
+    /**
+     * @brief Remapeo de posicion instalado por `#line`.
+     *
+     * `#line N "f"` dice que la linea SIGUIENTE es la N del fichero f.  No se
+     * guarda el desplazamiento sino el par (linea fisica de origen, linea
+     * reportada de origen), y el resto se calcula por diferencia: asi varios
+     * `#line` seguidos componen bien y no hay que arrastrar un acumulado.
+     */
+    bool        m_line_remap_active = false; ///< Hay un #line en vigor
+    uint32_t    m_line_base_phys    = 0;     ///< Linea fisica donde empieza
+    uint32_t    m_line_base_rep     = 0;     ///< Linea reportada equivalente
+    std::string m_line_remap_file;           ///< Fichero reportado, si se dio
+
+    /**
+     * @brief Traduce una posicion real a la que debe reportarse.
+     * @param real Posicion tal y como esta en el fichero.
+     * @return Posicion despues de aplicar el `#line` en vigor, si lo hay.
+     */
+    SourceLocation mapped_position(const SourceLocation& real) const;
+
     // Contadores para macros dinamicas
     uint32_t m_counter; ///< Valor actual de __COUNTER__
 

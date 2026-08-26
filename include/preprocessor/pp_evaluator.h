@@ -13,6 +13,24 @@
 namespace vpp {
 
 /**
+ * @brief Valor de una expresion del preprocesador, con su caracter de signo.
+ *
+ * El estandar de C evalua las condiciones de `#if` en el entero mas ancho
+ * disponible y aplica las conversiones aritmeticas habituales: si CUALQUIERA de
+ * los operandos es sin signo, la operacion entera pasa a ser sin signo.  Eso
+ * cambia resultados de forma poco intuitiva -- `-1 > 0u` es VERDADERO, porque
+ * el -1 se convierte a un valor enorme -- y sin arrastrar el signo junto al
+ * valor no hay manera de reproducirlo.
+ */
+struct PPValue {
+    int64_t v = 0;                  ///< Bits del valor.
+    bool    is_unsigned = false;    ///< true si debe interpretarse sin signo.
+
+    /** @brief Los mismos bits leidos sin signo. @return Valor sin signo. */
+    uint64_t u() const noexcept { return static_cast<uint64_t>(v); }
+};
+
+/**
  * @brief Evaluador de expresiones de preprocesador.
  *
  * Evalua expresiones de las directivas #if y #elif. Soporta:
@@ -24,7 +42,8 @@ namespace vpp {
  *   - Operador defined(MACRO) y defined MACRO
  *   - Macros predefinidas como __ARCH_32__, __WINDOWS__, etc.
  *
- * Todos los valores se manejan como enteros de 64 bits con signo (int64_t).
+ * Los valores se manejan como enteros de 64 bits que ademas arrastran si son
+ * con o sin signo, para poder aplicar las conversiones aritmeticas de C.
  * Las comparaciones y logicas devuelven 0 (falso) o 1 (verdadero).
  */
 class PPEvaluator {
@@ -102,86 +121,86 @@ private:
      * @brief Parsea una expresion ternaria (nivel mas bajo de precedencia).
      * @return Valor de la expresion.
      */
-    int64_t parse_ternary();
+    PPValue parse_ternary();
 
     /**
      * @brief Parsea una expresion OR logico (||).
      * @return Valor de la expresion.
      */
-    int64_t parse_or();
+    PPValue parse_or();
 
     /**
      * @brief Parsea una expresion AND logico (&&).
      * @return Valor de la expresion.
      */
-    int64_t parse_and();
+    PPValue parse_and();
 
     /**
      * @brief Parsea una expresion OR de bits (|).
      * @return Valor de la expresion.
      */
-    int64_t parse_bitor();
+    PPValue parse_bitor();
 
     /**
      * @brief Parsea una expresion XOR de bits (^).
      * @return Valor de la expresion.
      */
-    int64_t parse_xor();
+    PPValue parse_xor();
 
     /**
      * @brief Parsea una expresion AND de bits (&).
      * @return Valor de la expresion.
      */
-    int64_t parse_bitand();
+    PPValue parse_bitand();
 
     /**
      * @brief Parsea una comparacion de igualdad (==, !=).
      * @return Valor de la expresion.
      */
-    int64_t parse_equality();
+    PPValue parse_equality();
 
     /**
      * @brief Parsea una comparacion relacional (<, >, <=, >=).
      * @return Valor de la expresion.
      */
-    int64_t parse_relational();
+    PPValue parse_relational();
 
     /**
      * @brief Parsea un desplazamiento de bits (<< o >>).
      * @return Valor de la expresion.
      */
-    int64_t parse_shift();
+    PPValue parse_shift();
 
     /**
      * @brief Parsea una suma o resta (+ o -).
      * @return Valor de la expresion.
      */
-    int64_t parse_additive();
+    PPValue parse_additive();
 
     /**
      * @brief Parsea una multiplicacion, division o modulo (*, /, %).
      * @return Valor de la expresion.
      */
-    int64_t parse_multiplicative();
+    PPValue parse_multiplicative();
 
     /**
      * @brief Parsea un operador unario (!, ~, -, +) o un primario.
      * @return Valor de la expresion.
      */
-    int64_t parse_unary();
+    PPValue parse_unary();
 
     /**
      * @brief Parsea un primario: literal, identificador, defined(), o parentesis.
      * @return Valor del primario.
      */
-    int64_t parse_primary();
+    PPValue parse_primary();
 
     /**
      * @brief Convierte el valor textual de un token NUMBER a int64_t.
      * @param tok Token NUMBER a convertir.
      * @return Valor entero del literal.
      */
-    int64_t parse_number_literal(const PPToken& tok);
+    PPValue parse_number_literal(const PPToken& tok);
 };
 
 } // namespace vpp

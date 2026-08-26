@@ -83,6 +83,45 @@ valores distintos.
 #macro   NAME(p1, p2, ...) ... #endmacro macro multilinea (genera bloques de codigo)
 ```
 
+### Directivas y operadores de C
+
+Ademas del dialecto propio, vpp implementa lo que exige el preprocesador de C.
+Lo que sigue no es obvio y conviene tenerlo escrito:
+
+**`#line N "fichero"`** cambia la posicion que reportan `__LINE__` y `__FILE__`
+a partir de la linea siguiente.  Sirve para que el codigo generado apunte a su
+fuente original en vez de al fichero intermedio.
+
+```
+#line 100 "original.vx"
+aqui = __LINE__        // -> 100
+de   = __FILE__        // -> "original.vx"
+```
+
+**`_Pragma("texto")`** equivale a escribir `#pragma texto`.  Existe porque una
+macro no puede generar una directiva, y este operador es la via que da el
+estandar para conseguirlo:
+
+```
+#define EMPAQUETAR(n) _Pragma(#n)
+EMPAQUETAR(pack(1))    // -> #pragma pack(1)
+```
+
+**Aritmetica de `#if`** con las conversiones de C: si cualquiera de los
+operandos es sin signo, la operacion entera lo es.  Eso cambia resultados de
+forma poco intuitiva y conviene no olvidarlo:
+
+```
+#if -1 > 0u            // VERDADERO: el -1 se convierte en un valor enorme
+#if (-1 >> 1) == -1    // verdadero: con signo se replica el bit alto
+#if (0xFFFFFFFFFFFFFFFFu >> 60) == 15   // sin signo entran ceros
+```
+
+Un literal es sin signo si lleva sufijo `u`/`U`, o si no cabe en un entero con
+signo aunque no lo lleve.
+
+---
+
 ### Operadores en cuerpo de macros
 
 | Operador | Descripcion                                          | Ejemplo                           |
@@ -1330,7 +1369,7 @@ que el estandar **exige**, y por eso podian estar en verde mientras
 
 | Suite | Que mide |
 | :---- | :------- |
-| `vpp_test_conformance` | 25 casos preprocesados con vpp y con `gcc`/`clang`, comparando las salidas |
+| `vpp_test_conformance` | 35 casos preprocesados con vpp y con `gcc`/`clang`, comparando las salidas |
 | `vpp_test_system_headers` | Preprocesa un fuente con cabeceras del sistema, **compila** la salida y **ejecuta** el binario |
 
 La comparacion es a nivel de **token**, no de linea: dos salidas con los mismos
@@ -1342,7 +1381,7 @@ Los casos que se sepa que fallan van en `tests/conformance/xfail.txt` con la
 explicacion de que falla.  Uno listado que falla no rompe la suite; uno que
 **pasa** se reporta como XPASS y si la rompe, para obligar a sacarlo de la lista
 al arreglar el bug.  Asi el fichero no puede quedarse mintiendo sobre el estado
-real.  Ahora mismo la lista esta vacia: 25/25.
+real.  Ahora mismo la lista esta vacia: 35/35.
 
 Las dos suites se registran solo si hay un compilador de referencia; sin el se
 omiten en vez de dar un rojo que no dice nada del codigo.

@@ -59,6 +59,28 @@ static std::string escape_for_stringify(const PPToken& t) {
     return out;
 }
 
+// @brief Deshace el escapado de una cadena para el operador _Pragma.
+//
+// Es la operacion inversa a la de stringify: dentro del literal, `" y `\ se
+// escribieron escapados y hay que devolverlos a su forma original.  El
+// estandar lo llama "destringizar".
+//
+// @param literal Literal de cadena, con sus comillas.
+// @return Texto sin comillas y sin los escapes de comilla y barra.
+static std::string destringize(const std::string& literal) {
+    std::string out;
+    if (literal.size() < 2) return out;
+    // saltar las comillas de los extremos
+    for (size_t i = 1; i + 1 < literal.size(); ++i) {
+        if (literal[i] == 0x5C && i + 2 < literal.size() &&
+            (literal[i + 1] == '"' || literal[i + 1] == 0x5C)) {
+            ++i;   // el escape se cae; queda el caracter que protegia
+        }
+        out += literal[i];
+    }
+    return out;
+}
+
 // @brief Convierte los tokens de un argumento a su texto para stringify.
 //
 // Cada tramo de blancos ENTRE tokens se convierte en UN espacio, y los de los
@@ -1679,6 +1701,44 @@ static std::vector<PPToken> expand_impl(
                 ++pos;
                 continue;
             }
+            if (name == "_Pragma") {
+                // _Pragma("texto") equivale a escribir `#pragma texto`.
+                // Existe porque una macro no puede generar una directiva, y
+                // esta es la via que da el estandar para conseguirlo.
+                size_t j = pos + 1;
+                while (j < tokens.size() &&
+                       tokens[j].type == PPTokenType::WHITESPACE) ++j;
+
+                if (j < tokens.size() &&
+                    tokens[j].type == PPTokenType::LPAREN) {
+                    size_t k = j + 1;
+                    while (k < tokens.size() &&
+                           tokens[k].type == PPTokenType::WHITESPACE) ++k;
+
+                    if (k < tokens.size() &&
+                        tokens[k].type == PPTokenType::STRING) {
+                        size_t m = k + 1;
+                        while (m < tokens.size() &&
+                               tokens[m].type == PPTokenType::WHITESPACE) ++m;
+
+                        if (m < tokens.size() &&
+                            tokens[m].type == PPTokenType::RPAREN) {
+                            // La directiva tiene que quedar sola en su linea,
+                            // de ahi los saltos que la envuelven.
+                            const SourceLocation& l = tokens[pos].loc;
+                            result.emplace_back(PPTokenType::NEWLINE, "\n", l);
+                            result.emplace_back(PPTokenType::TEXT,
+                                "#pragma " + destringize(tokens[k].value), l);
+                            result.emplace_back(PPTokenType::NEWLINE, "\n", l);
+                            pos = m + 1;
+                            continue;
+                        }
+                    }
+                }
+                // mal formado: se deja pasar tal cual, que es mas util que
+                // inventarse una directiva
+            }
+
             if (name == "__COUNTER__") {
                 // se consume por EXPANSION: dos usos en la misma linea tienen
                 // que dar valores distintos
