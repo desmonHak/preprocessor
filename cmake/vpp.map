@@ -1,0 +1,31 @@
+/*
+ * vpp.map -- version script del enlazador ELF (GNU ld / lld).
+ *
+ * CXX_VISIBILITY_PRESET=hidden NO basta en ELF.  Oculta lo que compilamos
+ * nosotros, pero las instanciaciones de plantillas de libstdc++ (std::string,
+ * std::vector, std::_Hashtable...) salen de las cabeceras de la STL con
+ * visibilidad "default" propia, asi que acaban en la tabla de simbolos
+ * dinamicos de la biblioteca.  Medido: 9 simbolos C++ colados junto a los 23
+ * del ABI en C.
+ *
+ * Eso no es solo suciedad.  Son simbolos DEBILES: si el programa que carga
+ * libvpp.so usa tambien std::string, el enlazador dinamico puede resolver los
+ * del programa contra la copia de vpp o al reves.  Con la misma version de
+ * libstdc++ no pasa nada; con versiones distintas es un fallo en tiempo de
+ * ejecucion dificil de diagnosticar.  Es justo lo que "exportar solo el ABI en
+ * C" pretendia evitar.
+ *
+ * El version script se aplica en el ENLACE, asi que no depende de lo que
+ * declaren las cabeceras: lo que no case con vpp_* queda local.
+ *
+ * Se usa un nodo anonimo a proposito.  Un nodo con nombre (VPP_1.0) daria
+ * versionado de simbolos, util para evolucionar el ABI mas adelante, pero
+ * marca a los consumidores con esa version y quitarlo despues seria un cambio
+ * incompatible.  Aqui solo hace falta controlar que se exporta.
+ */
+{
+    global:
+        vpp_*;
+    local:
+        *;
+};

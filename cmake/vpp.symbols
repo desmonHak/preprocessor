@@ -1,0 +1,8 @@
+# vpp.symbols -- lista de simbolos exportados para el enlazador de macOS.
+#
+# Equivalente de cmake/vpp.map para ld64, que no entiende los version scripts
+# de GNU.  Mismo motivo: la visibilidad "hidden" no tapa las instanciaciones de
+# plantillas de la libreria estandar, y solo queremos exponer el ABI en C.
+#
+# En Mach-O los simbolos de C llevan guion bajo delante.
+_vpp_*

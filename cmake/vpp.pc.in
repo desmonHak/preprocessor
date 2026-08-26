@@ -1,0 +1,22 @@
+# Prefijo DEDUCIDO de donde esta este mismo fichero, no incrustado al
+# configurar.  Si se incrustara, un `cmake --install --prefix OTRO` o
+# simplemente descomprimir el paquete en otro sitio dejaria el .pc apuntando a
+# un prefijo que no existe -- y el fallo aparece como "no such file" al
+# compilar, no al instalar.  ${pcfiledir} lo resuelve pkg-config en cada uso.
+prefix=@PKGCONFIG_PREFIX@
+exec_prefix=${prefix}
+libdir=@PKGCONFIG_LIBDIR@
+includedir=@PKGCONFIG_INCLUDEDIR@
+datarootdir=@PKGCONFIG_DATADIR@
+
+# Ruta de la stdlib de macros (#import <vesta/...>) que acompana a la
+# biblioteca: pasala como import_path si embebes el preprocesador.
+vpp_include_lib=${datarootdir}/include_lib
+
+Name: vpp
+Description: Preprocesador C/C++ compatible de Vesta -- ABI en C, embebible en cualquier lenguaje
+URL: https://github.com/vesta-lang
+Version: @PROJECT_VERSION@
+Cflags: -I${includedir}
+Libs: -L${libdir} -l@VPP_PC_LIBNAME@
+Libs.private: @VPP_PC_LIBS_PRIVATE@

@@ -30,6 +30,7 @@ add_vpp_test(vpp_test_new_features test_new_features.cpp)
 add_vpp_test(vpp_test_variables    test_variables.cpp)
 add_vpp_test(vpp_test_float_conv   test_float_conv.cpp)
 add_vpp_test(vpp_test_import       test_import.cpp)
+add_vpp_test(vpp_test_c_api        test_c_api.cpp)
 
 # --- target de conveniencia para correr todos los tests --------------------
 
@@ -45,5 +46,6 @@ add_custom_target(vpp_run_tests
         vpp_test_variables
         vpp_test_float_conv
         vpp_test_import
+        vpp_test_c_api
     COMMENT "Ejecutando todos los tests del preprocesador vpp"
 )

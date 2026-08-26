@@ -1,0 +1,100 @@
+# @file vppConfig.cmake.in
+# @brief Plantilla del paquete CMake de vpp -- habilita find_package(vpp).
+#
+# Un consumidor escribe:
+#
+#   find_package(vpp 1.0 REQUIRED)
+#   target_link_libraries(mi_app PRIVATE vpp::vpp)          # compartida si existe
+#   target_link_libraries(mi_app PRIVATE vpp::vpp_static)   # estatica explicita
+#
+# En Windows este fichero es un DESPACHADOR: una instalacion puede contener las
+# bibliotecas de varias ABI a la vez (x64-mingw, x86-msvc, ...) porque una
+# estatica de MSVC y una de MinGW no son intercambiables.  Aqui se deduce con
+# que esta compilando el consumidor y se carga el juego de targets que le
+# corresponde.  En Unix hay una sola ABI y se carga el fichero de al lado.
+
+@PACKAGE_INIT@
+
+# --- deduccion de la ABI del CONSUMIDOR -------------------------------------
+
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(_vpp_arch "x64")
+else()
+    set(_vpp_arch "x86")
+endif()
+
+if(WIN32)
+    if(MSVC)
+        set(_vpp_cc "msvc")
+    else()
+        set(_vpp_cc "mingw")
+    endif()
+    set(_vpp_tag "${_vpp_arch}-${_vpp_cc}")
+else()
+    set(_vpp_tag "${_vpp_arch}")
+endif()
+
+# --- localizacion del fichero de targets ------------------------------------
+
+# Este fichero vive en <prefix>/lib/cmake/vpp/, de modo que ../.. es <prefix>/lib.
+get_filename_component(_vpp_libroot "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+
+set(_vpp_targets "${_vpp_libroot}/${_vpp_tag}/cmake/vpp/vppTargets.cmake")
+if(NOT EXISTS "${_vpp_targets}")
+    # Instalacion de una sola ABI con layout plano (el caso de Unix).
+    #
+    # Aqui no hay subdirectorio por ABI que separe los binarios, asi que la
+    # bitness se comprueba a mano.  El vppConfigVersion.cmake se genera con
+    # ARCH_INDEPENDENT -- tuvo que ser asi para que el layout multi-ABI de
+    # Windows pudiera servir las bibliotecas de 32 bits -- de modo que ya no
+    # rechaza por su cuenta a un consumidor de otra bitness.
+    if(NOT CMAKE_SIZEOF_VOID_P EQUAL @VPP_BUILD_SIZEOF_VOID_P@)
+        set(vpp_FOUND FALSE)
+        math(EXPR _vpp_bits_have "@VPP_BUILD_SIZEOF_VOID_P@ * 8")
+        math(EXPR _vpp_bits_want "${CMAKE_SIZEOF_VOID_P} * 8")
+        set(vpp_NOT_FOUND_MESSAGE
+            "esta instalacion de vpp es de ${_vpp_bits_have} bits y estas compilando a ${_vpp_bits_want}.  Instala la version que corresponda a tu arquitectura.")
+        return()
+    endif()
+    set(_vpp_targets "${CMAKE_CURRENT_LIST_DIR}/vppTargets.cmake")
+endif()
+
+if(NOT EXISTS "${_vpp_targets}")
+    # Fallar aqui con la lista de lo que SI hay es mucho mas util que dejar que
+    # el error salga luego en el enlazador como un simbolo no resuelto.
+    file(GLOB _vpp_have RELATIVE "${_vpp_libroot}"
+         "${_vpp_libroot}/*/cmake/vpp/vppTargets.cmake")
+    set(_vpp_abis "")
+    foreach(_p IN LISTS _vpp_have)
+        string(REPLACE "/cmake/vpp/vppTargets.cmake" "" _p "${_p}")
+        list(APPEND _vpp_abis "${_p}")
+    endforeach()
+    set(vpp_FOUND FALSE)
+    # Un solo argumento: varios se uniran con ";" y el mensaje saldria sucio.
+    string(REPLACE ";" ", " _vpp_abis_txt "${_vpp_abis}")
+    set(vpp_NOT_FOUND_MESSAGE
+        "no hay bibliotecas para la ABI '${_vpp_tag}' en esta instalacion.  ABIs disponibles: ${_vpp_abis_txt}.  Instala el componente correspondiente del paquete, o compila con un toolchain cuya ABI si este presente.")
+    return()
+endif()
+
+include("${_vpp_targets}")
+
+# --- extras -----------------------------------------------------------------
+
+set(vpp_ABI "${_vpp_tag}")
+
+# Ruta de la stdlib de macros (#import <vesta/...>) que acompana a la
+# biblioteca, para consumidores que embeben el preprocesador y necesitan
+# pasarla como import_path.
+set_and_check(vpp_INCLUDE_LIB_DIR "@PACKAGE_VPP_INSTALL_DATADIR@/include_lib")
+
+# Alias de conveniencia: se prefiere la compartida cuando esta disponible.
+if(NOT TARGET vpp::vpp)
+    if(TARGET vpp::vpp_shared)
+        add_library(vpp::vpp ALIAS vpp::vpp_shared)
+    elseif(TARGET vpp::vpp_static)
+        add_library(vpp::vpp ALIAS vpp::vpp_static)
+    endif()
+endif()
+
+check_required_components(vpp)

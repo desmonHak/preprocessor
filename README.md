@@ -895,12 +895,179 @@ if (mt.has_array("OPCODES")) {
 
 ---
 
+## Uso como biblioteca (ABI en C)
+
+La API C++ de arriba solo sirve para enlazar la biblioteca ESTATICA con el mismo
+compilador: `std::string` y `std::function` en la firma no cruzan la frontera de
+una DLL/.so entre MSVC, MinGW o versiones distintas de libstdc++.
+
+Para eso esta `preprocessor/vpp_c.h`: handles opacos, `const char*`, codigos de
+error y cero excepciones.  Es lo UNICO que exporta la biblioteca compartida, y
+por tanto es consumible desde C, Python, Rust, C#, Go, Zig o cualquier lenguaje
+con FFI a C.
+
+```c
+#include <preprocessor/vpp_c.h>
+#include <stdio.h>
+
+int main(void) {
+    vpp_preprocessor* pp = vpp_create();
+    char* out = NULL;
+
+    vpp_add_define(pp, "N=7");
+    vpp_add_include_path(pp, "./include");
+
+    vpp_status st = vpp_process(pp,
+        "#define DOBLE(x) ((x)*2)
+r = DOBLE(N)
+", "u.c", &out);
+
+    if (st == VPP_ERR_DIAGNOSTIC) {
+        for (size_t i = 0; i < vpp_diagnostic_count(pp); ++i) {
+            vpp_diagnostic d;
+            vpp_diagnostic_at(pp, i, &d);
+            fprintf(stderr, "%s:%u:%u: %s
+", d.file, d.line, d.col, d.message);
+        }
+    } else {
+        printf("%s", out);          /* r = ((7)*2) */
+    }
+
+    vpp_string_free(out);           /* SIEMPRE con vpp_string_free, no free */
+    vpp_destroy(pp);
+    return 0;
+}
+```
+
+Desde Python, sin compilar nada:
+
+```python
+import ctypes
+lib = ctypes.CDLL("vpp.dll")            # libvpp.so en Linux
+lib.vpp_create.restype = ctypes.c_void_p
+lib.vpp_process.argtypes = [ctypes.c_void_p, ctypes.c_char_p,
+                            ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p)]
+pp, out = lib.vpp_create(), ctypes.c_char_p()
+lib.vpp_process(pp, b"#define A 1
+x = A
+", b"m.c", ctypes.byref(out))
+print(out.value.decode())
+```
+
+### Reglas de propiedad de memoria
+
+- Lo que devuelve `vpp_process` / `vpp_process_file` es **del llamante**: se
+  libera con `vpp_string_free` (nunca con `free`, porque la biblioteca puede
+  tener otro heap).
+- Todo `const char*` de los demas getters es **prestado**: deja de ser valido
+  tras el siguiente `vpp_process*` o tras `vpp_destroy`.
+- Un handle NO es thread-safe: usa uno por hilo.
+- Un handle acumula macros y diagnosticos entre llamadas; para unidades de
+  traduccion independientes, usa un handle por unidad.
+
+---
+
 ## Construccion
 
 ### Requisitos
 
 - CMake 3.16+
 - Compilador C++17: GCC 8+, Clang 7+, MSVC 2019+
+
+### Artefactos que se generan
+
+| Artefacto | Target CMake | Para que sirve |
+| :-------- | :----------- | :------------- |
+| `libvpp.a` (MinGW) / `vpp_static.lib` (MSVC) | `vpp_lib` | Enlace estatico.  Expone la API C++ **y** el ABI en C.  Compilado con `-fPIC`, asi que puede embeberse dentro de un `.so`. |
+| `vpp.dll` / `libvpp.so` | `vpp_shared` | Biblioteca compartida.  Exporta **solo** el ABI en C (los simbolos C++ quedan ocultos), lo que la hace consumible desde cualquier compilador y lenguaje. |
+| `libvpp.dll.a` (MinGW) / `vpp.lib` (MSVC) | `vpp_shared` | Import library de la DLL. |
+| `vpp.def` (solo MinGW) | `vpp_shared` | Lista de exports de la DLL, para fabricar una import library de MSVC (ver abajo). |
+| `vpp.exe` / `vpp` | `vpp` | Herramienta de linea de comandos. |
+| `vpp.pc` | -- | pkg-config, para consumidores que no usan CMake. |
+| `vppConfig.cmake` | -- | Paquete CMake, para `find_package(vpp)`. |
+
+### ABIs de Windows
+
+Una biblioteca estatica **no** es intercambiable entre MSVC y MinGW: distinto
+mangling de C++, distinto modelo de excepciones y distinta STL.  Tampoco entre
+32 y 64 bits.  No hay conversion posible; la unica salida es compilar una vez
+por ABI.  Por eso en Windows las bibliotecas se instalan separadas:
+
+```
+include/preprocessor/*.h        <- comunes a todas las ABI
+lib/cmake/vpp/vppConfig.cmake   <- comun: elige la ABI segun tu compilador
+lib/x64-mingw/  libvpp.a  libvpp.dll.a  vpp.dll  vpp.def  pkgconfig/  cmake/
+lib/x86-mingw/  libvpp.a  libvpp.dll.a  vpp.dll  vpp.def  pkgconfig/  cmake/
+lib/x64-msvc/   vpp_static.lib  vpp.lib  vpp.dll  pkgconfig/  cmake/
+lib/x86-msvc/   vpp_static.lib  vpp.lib  vpp.dll  pkgconfig/  cmake/
+```
+
+`find_package(vpp)` deduce con que esta compilando el consumidor y carga la ABI
+correcta sin que haya que decirle nada; si esa ABI no esta instalada, falla en
+la configuracion con la lista de las que si estan, en lugar de dejar que el
+error salga luego como un simbolo no resuelto.  La ABI elegida queda en
+`vpp_ABI`.
+
+En Unix no aplica: gcc y clang comparten ABI, y se usa el `lib/` plano de
+siempre.
+
+**Cual usar: la dinamica o la estatica.**  No son equivalentes en lo que
+exponen.
+
+La biblioteca **dinamica** exporta unicamente el ABI en C (verificado: 23
+simbolos, cero simbolos C++, tanto en la DLL de Windows como en la `.so` de
+Linux).  Por eso la consume cualquier compilador y cualquier lenguaje, y es la
+opcion por defecto para terceros.
+
+La biblioteca **estatica** tiene dos requisitos que la dinamica no.
+
+Primero, aunque la uses solo a traves de `vpp_c.h`, por dentro es C++, asi que
+tu proyecto tiene que habilitar ese lenguaje aunque no escribas ni una linea de
+C++:
+
+```cmake
+project(mi_app LANGUAGES C CXX)      # el CXX es imprescindible con vpp::vpp_static
+find_package(vpp 1.0 REQUIRED)
+target_link_libraries(mi_app PRIVATE vpp::vpp_static)
+```
+
+Sin el, CMake enlaza con el driver de C y el enlace muere con `undefined
+reference to operator new`.  Con la dinamica no pasa: lleva la runtime dentro.
+
+Segundo, expone ademas la API C++, y eso ata al consumidor:
+`std::string` y `std::function` en la firma obligan a compilar con un toolchain
+compatible con el que se construyo -- misma familia de compilador y una version
+de la biblioteca estandar compatible.  Enlazar `vpp_static.lib` de MSVC 14.4x
+desde otro toolset, o `libvpp.a` de GCC desde clang con otra libstdc++, puede
+fallar en el enlace o, peor, compilar y romperse en ejecucion.  Si usas la
+estatica desde otro lenguaje o no controlas el compilador del consumidor, usa
+solo las funciones de `vpp_c.h`, que no tienen ese problema.
+
+**Consumir la DLL de MinGW desde MSVC.**  Se puede, porque los 23 exports estan
+sin decorar y la DLL lleva la runtime de C++ enlazada estaticamente.  O bien con
+`LoadLibrary` + `GetProcAddress` directamente, o fabricando la import library:
+
+```bat
+lib /def:libd-mingwpp.def /machine:x64 /out:vpp.lib
+```
+
+Aun asi, lo natural es instalar el componente `x64-msvc` y dejar que
+`find_package` haga su trabajo.
+
+### Opciones
+
+| Opcion | Por defecto | Efecto |
+| :----- | :---------- | :----- |
+| `VPP_BUILD_STATIC` | `ON` | Construye la biblioteca estatica. |
+| `VPP_BUILD_SHARED` | `ON` si es el proyecto raiz | Construye la DLL/.so. |
+| `VPP_BUILD_EXE` | `ON` | Construye el ejecutable `vpp`. |
+| `VPP_BUILD_TESTS` | `ON` | Construye los tests. |
+| `VPP_INSTALL` | `ON` si es el proyecto raiz | Genera las reglas de instalacion y el paquete. |
+
+Como submodulo de otro proyecto, los cuatro valores que dependen de "proyecto
+raiz" pasan a `OFF` solos: el padre solo obtiene el `.a` y no paga el coste de
+construir ni empaquetar lo demas.
+
 
 ### Construir el ejecutable y los tests
 
@@ -925,6 +1092,124 @@ ctest --output-on-failure
 cmake -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release ..
 mingw32-make -j4
 ```
+
+---
+
+## Instalar y consumir desde otro proyecto
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+cmake --install build --prefix /donde/quieras
+```
+
+Desde CMake:
+
+```cmake
+find_package(vpp 1.0 REQUIRED)
+target_link_libraries(mi_app PRIVATE vpp::vpp)          # la compartida si existe
+# target_link_libraries(mi_app PRIVATE vpp::vpp_static) # forzar la estatica
+```
+
+Desde pkg-config:
+
+```bash
+gcc mi_app.c $(pkg-config --cflags --libs vpp) -o mi_app
+```
+
+La stdlib de macros (`#import <vesta/...>`) se instala junto a la biblioteca; su
+ruta se expone como `vpp_INCLUDE_LIB_DIR` en CMake y como `vpp_include_lib` en
+el `.pc`, para pasarla como `import_path` cuando embebes el preprocesador.
+
+---
+
+## Generar un instalador
+
+Para una sola ABI (la del compilador con el que configuraste):
+
+```bash
+cmake --build build --target installer       # Windows: vpp-<ver>-win64.exe (NSIS)
+cmake --build build --target installer-zip   # portable: .zip (Windows) / .tar.gz
+```
+
+Para un instalador que traiga **todas las ABI de Windows** a la vez:
+
+```bat
+cmakeuild_all_abis.bat --vcvarsall "C:\...\VC\Auxiliary\Buildcvarsall.bat"
+```
+
+Compila MinGW x64/x86 y MSVC x64/x86, preinstala cada una en su staging y
+genera un unico `.exe` con las cuatro.  Sin `--vcvarsall` se omiten las ABI de
+MSVC (avisa, no es un error); `--no-mingw` / `--no-msvc` / `--no-installer`
+acotan lo que se hace.
+
+El target `installer` **descarga NSIS solo** (version portable, ~2.3 MB, con
+hash fijado) si `makensis` no esta en el sistema: no hay que instalar nada a
+mano.  El instalador ofrece estos componentes marcables:
+
+| Componente | Contenido |
+| :--------- | :-------- |
+| `runtime` (obligatorio) | `vpp.exe` y la stdlib de macros |
+| `headers` | cabeceras y el `vppConfig.cmake` que elige la ABI |
+| `libs_x64_mingw`, `libs_x86_mingw`, `libs_x64_msvc`, `libs_x86_msvc` | las bibliotecas de cada ABI; marca la de tu compilador |
+| `docs` | README y licencia |
+
+Ademas anade `<prefix>in` al PATH (con pagina de eleccion), de modo que `vpp`
+queda disponible desde cualquier shell.
+
+### Linux: paquetes nativos
+
+```bash
+cmake --build build --target installer-deb   # -> vpp_<ver>_amd64.deb + vpp-dev_<ver>_amd64.deb
+cmake --build build --target installer-rpm   # -> vpp-<ver>-1.x86_64.rpm + vpp-devel-...
+cmake --build build --target installer-zip   # -> vpp-<ver>-Linux-x86_64.tar.gz
+```
+
+El reparto sigue la convencion de las distribuciones: el paquete base lleva lo
+que hace falta para EJECUTAR, y el `-dev` lo que hace falta para COMPILAR
+contra la biblioteca.
+
+| Paquete | Contenido |
+| :------ | :-------- |
+| `vpp` / `vpp` (rpm) | `/usr/bin/vpp`, `libvpp.so.1` -> `libvpp.so.1.0.0`, stdlib de macros, docs |
+| `vpp-dev` / `vpp-devel` (rpm) | cabeceras, `libvpp.a`, el enlace `libvpp.so`, `vpp.pc` y el paquete CMake.  Depende del paquete base con la misma version |
+
+El generador de RPM necesita `rpmbuild` instalado; el de DEB no necesita nada
+fuera de lo que ya trae una Debian.
+
+Las dependencias (`libc6`, `libstdc++6`, `libgcc-s1`) las deduce
+`dpkg-shlibdeps` leyendo los binarios, no una lista escrita a mano.
+
+**Que el `.deb` instale en otras distribuciones.**  Un paquete hereda como
+dependencia la glibc de la maquina donde se compilo.  Construido en una
+distribucion reciente declara algo como `libc6 (>= 2.38)` y `dpkg` lo RECHAZA
+en Debian 12 o Ubuntu 22.04, aunque el codigo funcionase ahi perfectamente.  Y
+no hay flag que lo evite: glibc 2.38+ redirige `strtoll`/`strtoul`/`strtoull` a
+variantes `__isoc23_*` de forma incondicional.
+
+La solucion es compilar contra cabeceras antiguas, que es lo que automatiza:
+
+```bash
+sudo cmake/build_linux_compat.sh          # monta un chroot Debian 11 y compila ahi
+```
+
+Deja los paquetes en `dist-linux/`.  Medido, el resultado pasa de
+
+```
+libc6 (>= 2.38), libgcc-s1 (>= 3.0), libstdc++6 (>= 13.1)
+```
+
+a una sola dependencia:
+
+```
+libc6 (>= 2.29)
+```
+
+La de `libstdc++6` desaparece porque el runtime de C++ se enlaza DENTRO de la
+biblioteca, algo que aqui es seguro precisamente porque el version script
+garantiza que no sale ningun simbolo C++ de ella.  Con ese suelo, el `.deb`
+instala en Debian 11+, Ubuntu 20.04+, RHEL 9+ y cualquier distribucion mas
+reciente.
 
 ---
 
