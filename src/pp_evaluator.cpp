@@ -15,10 +15,79 @@ PPEvaluator::PPEvaluator(MacroTable& macros, DiagnosticEngine& diag)
     : m_macros(macros), m_diag(diag), m_pos(0)
 {}
 
+std::vector<PPToken> PPEvaluator::resolve_defined(
+        const std::vector<PPToken>& tokens) const {
+    std::vector<PPToken> out;
+    out.reserve(tokens.size());
+
+    for (size_t i = 0; i < tokens.size(); ++i) {
+        const PPToken& t = tokens[i];
+
+        // solo interesa el operador `defined`; el resto pasa tal cual
+        if (t.type != PPTokenType::IDENT || t.value != "defined") {
+            out.push_back(t);
+            continue;
+        }
+
+        // saltar el espacio entre `defined` y su operando
+        size_t j = i + 1;
+        auto skip_ws = [&tokens](size_t k) {
+            while (k < tokens.size() &&
+                   (tokens[k].type == PPTokenType::WHITESPACE ||
+                    tokens[k].type == PPTokenType::NEWLINE)) {
+                ++k;
+            }
+            return k;
+        };
+        j = skip_ws(j);
+
+        bool     paren = false;
+        if (j < tokens.size() && tokens[j].type == PPTokenType::LPAREN) {
+            paren = true;
+            j = skip_ws(j + 1);
+        }
+
+        if (j >= tokens.size() || tokens[j].type != PPTokenType::IDENT) {
+            // Malformado.  Se deja `defined` en el stream para que el parser
+            // emita el error con su ubicacion, en lugar de inventar un valor.
+            out.push_back(t);
+            continue;
+        }
+
+        const std::string name = tokens[j].value;
+        j = skip_ws(j + 1);
+
+        if (paren) {
+            if (j >= tokens.size() || tokens[j].type != PPTokenType::RPAREN) {
+                out.push_back(t);   // falta el ')': que lo diagnostique el parser
+                continue;
+            }
+            ++j;
+        }
+
+        // El resultado sustituye a TODO el operador, incluido su operando: asi
+        // el nombre de la macro nunca llega a la fase de expansion.
+        out.emplace_back(PPTokenType::NUMBER,
+                         m_macros.is_defined(name) ? "1" : "0",
+                         t.loc);
+        i = j - 1;
+    }
+
+    return out;
+}
+
 int64_t PPEvaluator::evaluate(const std::vector<PPToken>& tokens,
                                const SourceLocation& loc) {
-    // expandir macros antes de evaluar
-    m_toks = m_macros.expand(tokens, loc);
+    // `defined` PRIMERO, y solo despues expandir.
+    //
+    // El estandar de C dice que las macros de la expresion se expanden "salvo
+    // las modificadas por el operador defined".  Haciendolo al reves -- que era
+    // lo que habia -- `defined(A)` con A definida se convierte en `defined(1)`
+    // y el operador ya no encuentra un nombre de macro.  El sintoma es que
+    // `#if defined(X)` solo funcionaba cuando X NO estaba definida, justo el
+    // caso que no importa, y bastaba para tumbar cualquier cabecera del
+    // sistema.
+    m_toks = m_macros.expand(resolve_defined(tokens), loc);
     m_pos  = 0;
     m_loc  = loc;
 

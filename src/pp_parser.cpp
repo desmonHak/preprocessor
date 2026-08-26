@@ -150,15 +150,42 @@ NodePtr PPParser::parse_text_line() {
     SourceLocation l = cur().loc;
     std::vector<PPToken> toks;
 
-    while (!check(PPTokenType::NEWLINE) &&
-           !check(PPTokenType::PP_EOF)  &&
-           !check(PPTokenType::HASH)) {
-        toks.push_back(consume());
+    // Profundidad de parentesis.  Una llamada a macro funcion puede repartirse
+    // en varias lineas -- es habitual en cabeceras reales, p.ej. el __REDIRECT
+    // de glibc:
+    //     extern int __REDIRECT (fscanf, (FILE *__restrict __stream,
+    //                                     const char *__restrict __format, ...),
+    //                            __isoc23_fscanf) ...
+    // Si se cortara el nodo en cada salto de linea, la expansion nunca veria el
+    // parentesis de cierre y la llamada fallaria con "numero incorrecto de
+    // argumentos".  Mientras haya parentesis abiertos se sigue leyendo.
+    int depth = 0;
+
+    for (;;) {
+        while (!check(PPTokenType::NEWLINE) &&
+               !check(PPTokenType::PP_EOF)  &&
+               !check(PPTokenType::HASH)) {
+            if (check(PPTokenType::LPAREN))      ++depth;
+            else if (check(PPTokenType::RPAREN) && depth > 0) --depth;
+            toks.push_back(consume());
+        }
+
+        // consumir el NEWLINE que cierra la linea
+        if (check(PPTokenType::NEWLINE)) {
+            toks.push_back(consume());
+        }
+
+        // Se continua SOLO con parentesis pendientes.  El corte en HASH y en
+        // PP_EOF se mantiene: una directiva dentro de los argumentos de una
+        // macro no esta definida por el estandar, y sin esos frenos un
+        // parentesis que nunca cierra se comeria el resto del fichero.
+        if (depth <= 0 ||
+            check(PPTokenType::PP_EOF) ||
+            check(PPTokenType::HASH)) {
+            break;
+        }
     }
-    // consumir el NEWLINE que cierra la linea
-    if (check(PPTokenType::NEWLINE)) {
-        toks.push_back(consume());
-    }
+
     return std::make_unique<TextNode>(l, std::move(toks));
 }
 

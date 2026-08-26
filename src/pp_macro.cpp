@@ -1464,9 +1464,18 @@ static std::vector<std::vector<PPToken>> collect_generic_args(
     }
     // eliminar whitespace inicial y final de cada argumento
     for (auto& arg : args) {
-        while (!arg.empty() && arg.front().type == PPTokenType::WHITESPACE)
+        // Tambien los NEWLINE: una llamada repartida en varias lineas mete un
+        // salto al principio del argumento siguiente, y sin recortarlo la
+        // expansion arrastra un espacio de mas frente a lo que emite un
+        // preprocesador de C.  El blanco que rodea a un argumento no forma
+        // parte de el.
+        auto is_blank = [](const PPToken& t) {
+            return t.type == PPTokenType::WHITESPACE ||
+                   t.type == PPTokenType::NEWLINE;
+        };
+        while (!arg.empty() && is_blank(arg.front()))
             arg.erase(arg.begin());
-        while (!arg.empty() && arg.back().type == PPTokenType::WHITESPACE)
+        while (!arg.empty() && is_blank(arg.back()))
             arg.pop_back();
     }
     return args;
@@ -1664,9 +1673,18 @@ std::vector<std::vector<PPToken>> MacroTable::collect_args(
 
     // eliminar whitespace inicial y final de cada argumento (comportamiento estandar)
     for (auto& arg : args) {
-        while (!arg.empty() && arg.front().type == PPTokenType::WHITESPACE)
+        // Tambien los NEWLINE: una llamada repartida en varias lineas mete un
+        // salto al principio del argumento siguiente, y sin recortarlo la
+        // expansion arrastra un espacio de mas frente a lo que emite un
+        // preprocesador de C.  El blanco que rodea a un argumento no forma
+        // parte de el.
+        auto is_blank = [](const PPToken& t) {
+            return t.type == PPTokenType::WHITESPACE ||
+                   t.type == PPTokenType::NEWLINE;
+        };
+        while (!arg.empty() && is_blank(arg.front()))
             arg.erase(arg.begin());
-        while (!arg.empty() && arg.back().type == PPTokenType::WHITESPACE)
+        while (!arg.empty() && is_blank(arg.back()))
             arg.pop_back();
     }
 

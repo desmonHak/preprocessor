@@ -1,0 +1,52 @@
+# Casos de conformidad que hoy NO pasan.
+#
+# Un caso listado aqui puede fallar sin romper la suite.  Si empieza a pasar se
+# reporta como XPASS y SI la rompe, para obligar a quitarlo de esta lista: asi
+# el fichero no se queda mintiendo sobre el estado real.
+#
+# Cada entrada dice QUE falla, para que se pueda priorizar sin volver a
+# investigar desde cero.
+
+# --- `defined` -- ARREGLADO ---------------------------------------------------
+# Era CRITICO: el operando se expandia antes de evaluar el operador, asi que
+# `defined(A)` con A definida acababa siendo `defined(1)`.  Resuelto moviendo la
+# resolucion de `defined` ANTES de la expansion (resolve_defined en
+# pp_evaluator.cpp), que es el orden que exige el estandar.
+
+# --- stringify (#) -----------------------------------------------------------
+# Tres defectos distintos:
+#  - no conserva el espacio entre tokens:  STR(a b)      -> "ab"  (deberia "a b")
+#  - no escapa las comillas del interior:  STR(a "b" c)  -> "a"b"c"  (C invalido)
+#  - no expande el argumento antes de pasarlo a otra macro, asi que el idioma
+#    universal XSTR(x)/STR(x) no funciona: XSTR(V) -> "V" en vez de "42"
+020_stringify.c
+021_stringify_indirect.c
+022_stringify_quotes.c
+
+# --- pegado (##) con operandos vacios ---------------------------------------
+# El `##` literal se cuela en la salida:  CAT(,) -> "## "  (deberia quedar vacio)
+031_paste_empty.c
+
+# --- variadicas --------------------------------------------------------------
+# __VA_ARGS__ emite una coma sobrante:  LOG("%d", 1) -> printf("%d", 1, )
+# El resultado es C sintacticamente invalido.
+040_variadic.c
+
+# __VA_OPT__ (C23 / C++20) no esta implementado: pasa tal cual a la salida.
+042_va_opt.c
+
+# --- expresiones #if ---------------------------------------------------------
+# Las constantes de caracter no se aceptan:  #if 'A' == 65  -> error
+061_if_char.c
+
+# --- invocacion multilinea -- ARREGLADO --------------------------------------
+# El parser cortaba un TextNode por linea, asi que una llamada repartida en
+# varias -- patron habitual en cabeceras reales, como el __REDIRECT de glibc --
+# nunca veia su parentesis de cierre.  Resuelto en parse_text_line, que ahora
+# sigue leyendo mientras queden parentesis abiertos.
+
+# --- DIVERGENCIA DELIBERADA, ya no se marca ----------------------------------
+# C sustituye un comentario por UN espacio; vpp conserva sus saltos de linea a
+# proposito (commit f40ac33) para no descuadrar la numeracion de las etapas
+# siguientes.  Desde que la comparacion es por TOKENS y no por lineas, esa
+# diferencia ya no cuenta como fallo: los tokens son los mismos.

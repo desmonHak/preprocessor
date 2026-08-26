@@ -47,6 +47,19 @@ public:
                      const SourceLocation& loc);
 
 private:
+    /**
+     * @brief Sustituye cada `defined X` / `defined(X)` por 1 o 0.
+     *
+     * Se aplica ANTES de expandir macros, porque el operando de `defined` es lo
+     * unico de la expresion que no debe expandirse.  Lo que quede malformado se
+     * deja intacto para que el parser lo diagnostique con su ubicacion real.
+     *
+     * @param tokens Tokens de la condicion, sin expandir.
+     * @return Los mismos tokens con los operadores `defined` ya resueltos.
+     */
+    std::vector<PPToken> resolve_defined(
+        const std::vector<PPToken>& tokens) const;
+
     MacroTable&       m_macros; ///< Referencia a la tabla de macros
     DiagnosticEngine& m_diag;   ///< Motor de diagnosticos
 

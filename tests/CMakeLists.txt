@@ -32,6 +32,31 @@ add_vpp_test(vpp_test_float_conv   test_float_conv.cpp)
 add_vpp_test(vpp_test_import       test_import.cpp)
 add_vpp_test(vpp_test_c_api        test_c_api.cpp)
 
+# --- suite de conformidad con el preprocesador de C -------------------------
+#
+# Diffea la salida de vpp contra la de gcc/clang sobre un corpus de casos.  Los
+# tests de arriba comprueban lo que vpp construyo; este comprueba lo que el
+# estandar de C exige, que es lo que sostiene el objetivo de ser un
+# preprocesador usable desde cualquier lenguaje.
+#
+# Necesita un compilador de referencia.  Si no hay ninguno, el test no se
+# registra en vez de fallar: es preferible a un rojo que no dice nada del
+# codigo.
+find_program(VPP_REF_CC NAMES gcc clang cc)
+if(VPP_REF_CC AND TARGET vpp)
+    add_test(NAME vpp_test_conformance
+        COMMAND ${CMAKE_COMMAND}
+            -DVPP=$<TARGET_FILE:vpp>
+            -DCC=${VPP_REF_CC}
+            -DCASES_DIR=${CMAKE_CURRENT_SOURCE_DIR}/conformance/cases
+            -DXFAIL_FILE=${CMAKE_CURRENT_SOURCE_DIR}/conformance/xfail.txt
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/conformance/run_conformance.cmake)
+    set_tests_properties(vpp_test_conformance PROPERTIES TIMEOUT 180)
+    message(STATUS "  Conformidad   : ${VPP_REF_CC}")
+else()
+    message(STATUS "  Conformidad   : sin compilador de referencia; test omitido")
+endif()
+
 # --- target de conveniencia para correr todos los tests --------------------
 
 add_custom_target(vpp_run_tests
