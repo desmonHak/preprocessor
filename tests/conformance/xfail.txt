@@ -13,37 +13,30 @@
 # resolucion de `defined` ANTES de la expansion (resolve_defined en
 # pp_evaluator.cpp), que es el orden que exige el estandar.
 
-# --- stringify (#) -----------------------------------------------------------
-# Tres defectos distintos:
-#  - no conserva el espacio entre tokens:  STR(a b)      -> "ab"  (deberia "a b")
-#  - no escapa las comillas del interior:  STR(a "b" c)  -> "a"b"c"  (C invalido)
-#  - no expande el argumento antes de pasarlo a otra macro, asi que el idioma
-#    universal XSTR(x)/STR(x) no funciona: XSTR(V) -> "V" en vez de "42"
-020_stringify.c
-021_stringify_indirect.c
-022_stringify_quotes.c
+# --- stringify (#) -- ARREGLADO ----------------------------------------------
+# Tres defectos, los tres cerrados: conserva un espacio entre tokens
+# (tokens_raw), escapa comillas y barras de los literales
+# (escape_for_stringify), y expande el argumento antes de sustituirlo salvo
+# cuando es operando de # o ##, con lo que el idioma XSTR(x)/STR(x) funciona.
 
-# --- pegado (##) con operandos vacios ---------------------------------------
-# El `##` literal se cuela en la salida:  CAT(,) -> "## "  (deberia quedar vacio)
-031_paste_empty.c
+# --- pegado (##) con operandos vacios -- ARREGLADO ---------------------------
+# Se daba por hecho que siempre habia un token a cada lado del operador, y al no
+# encontrarlo se dejaba el `##` literal en la salida: CAT(,) daba "## ".  Ahora
+# un operando vacio produce simplemente el otro operando.
 
-# --- variadicas --------------------------------------------------------------
-# __VA_ARGS__ emite una coma sobrante:  LOG("%d", 1) -> printf("%d", 1, )
-# El resultado es C sintacticamente invalido.
-040_variadic.c
+# --- variadicas -- PARCIALMENTE ARREGLADO ------------------------------------
+# Arreglada la coma sobrante de __VA_ARGS__: el troceado de argumentos usaba
+# `params.size() - 1`, y como `params` no incluye el `...`, con `L(a, ...)` no
+# troceaba nunca y con `M(...)` funcionaba de milagro por el underflow a
+# SIZE_MAX.
 
-# __VA_OPT__ (C23 / C++20) no esta implementado: pasa tal cual a la salida.
-042_va_opt.c
+# __VA_OPT__ (C23 / C++20) implementado: emite su contenido solo si la parte
+# variadica trae algun token.  Es la forma estandar de evitar la coma colgante
+# de `LOG(fmt, ...)` llamado sin variadicos.
 
-# --- expresiones #if ---------------------------------------------------------
-# Las constantes de caracter no se aceptan:  #if 'A' == 65  -> error
-061_if_char.c
-
-# --- invocacion multilinea -- ARREGLADO --------------------------------------
-# El parser cortaba un TextNode por linea, asi que una llamada repartida en
-# varias -- patron habitual en cabeceras reales, como el __REDIRECT de glibc --
-# nunca veia su parentesis de cierre.  Resuelto en parse_text_line, que ahora
-# sigue leyendo mientras queden parentesis abiertos.
+# --- expresiones #if -- ARREGLADO --------------------------------------------
+# Las constantes de caracter no se aceptaban y abortaban el fichero entero.
+# char_literal_value las resuelve por codigo en pp_evaluator.cpp.
 
 # --- DIVERGENCIA DELIBERADA, ya no se marca ----------------------------------
 # C sustituye un comentario por UN espacio; vpp conserva sus saltos de linea a

@@ -237,13 +237,20 @@ public:
      * @param body   Tokens del cuerpo de la macro.
      * @param params Nombres de los parametros formales.
      * @param args   Argumentos ya expandidos.
-     * @param loc    Ubicacion de la llamada.
+     * @param raw_args      Argumentos SIN expandir.  Son los que corresponden a
+     *                      un parametro pegado con `##`.
+     * @param expanded_args Argumentos ya expandidos.  Son los que corresponden
+     *                      a un parametro en cualquier otra posicion, tal y
+     *                      como exige el estandar; sin ellos el idioma
+     *                      XSTR(x)/STR(x) no funciona.
+     * @param loc           Ubicacion de la llamada.
      * @return Tokens del cuerpo con los parametros sustituidos.
      */
     std::vector<PPToken> substitute(
         const std::vector<PPToken>& body,
         const std::vector<std::string>& params,
-        const std::vector<std::vector<PPToken>>& args,
+        const std::vector<std::vector<PPToken>>& raw_args,
+        const std::vector<std::vector<PPToken>>& expanded_args,
         const SourceLocation& loc);
 
     /**

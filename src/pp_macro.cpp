@@ -40,13 +40,44 @@ namespace vpp {
 
 /* --- utilidades locales --------------------------------------------------- */
 
-// convierte un vector de tokens a su representacion textual para stringify
+// @brief Escapa un token para meterlo dentro de una cadena de stringify.
+//
+// El estandar pide insertar una barra invertida delante de cada `"` y cada `\`
+// DE UNA CADENA O CONSTANTE DE CARACTER.  Fuera de un literal no se escapa
+// nada: por eso `#x` con `x\y` da `"x\y"` y no `"x\y"`.  Sin esto, un
+// `STR(a "b" c)` producia `"a"b"c"`, que ni siquiera es C valido.
+static std::string escape_for_stringify(const PPToken& t) {
+    if (t.type != PPTokenType::STRING && t.type != PPTokenType::CHAR_LIT) {
+        return t.value;
+    }
+    std::string out;
+    out.reserve(t.value.size() + 4);
+    for (char c : t.value) {
+        if (c == '"' || c == '\\') out += '\\';
+        out += c;
+    }
+    return out;
+}
+
+// @brief Convierte los tokens de un argumento a su texto para stringify.
+//
+// Cada tramo de blancos ENTRE tokens se convierte en UN espacio, y los de los
+// extremos desaparecen.  Descartarlos del todo -- que era lo que se hacia --
+// pegaba los tokens: `STR(a b)` daba `"ab"` en vez de `"a b"`.
 static std::string tokens_raw(const std::vector<PPToken>& toks) {
     std::string s;
+    bool pending_space = false;
     for (const auto& t : toks) {
-        if (t.type != PPTokenType::WHITESPACE) {
-            s += t.value;
+        if (t.type == PPTokenType::WHITESPACE ||
+            t.type == PPTokenType::NEWLINE) {
+            pending_space = !s.empty();   // nunca un espacio al principio
+            continue;
         }
+        if (pending_space) {
+            s += ' ';
+            pending_space = false;
+        }
+        s += escape_for_stringify(t);
     }
     return s;
 }
@@ -1575,11 +1606,33 @@ static std::vector<PPToken> expand_one_impl(
     auto args = table.collect_args(tokens, pos, *mac, tok.loc);
 
     // aplicar # (stringify) sobre el cuerpo original, antes de sustituir los parametros
-    // para que los nombres de parametro formales aun sean visibles
+    // para que los nombres de parametro formales aun sean visibles.
+    // Usa los argumentos SIN expandir, que es lo que pide el estandar para `#`.
     auto stringified = table.apply_stringify(mac->body, mac->params, args);
 
+    // Argumentos completamente expandidos.
+    //
+    // El estandar dice que un argumento se expande del todo ANTES de meterlo en
+    // el cuerpo, salvo cuando el parametro es operando de `#` o de `##`.  Antes
+    // se sustituian siempre los crudos y se confiaba en el reescaneo posterior;
+    // eso cuela en los casos simples -- `ID(A)` acaba expandiendo A igual -- pero
+    // no cuando el parametro va a parar a OTRA macro funcion: el idioma
+    // universal
+    //     #define STR(x)  #x
+    //     #define XSTR(x) STR(x)
+    // daba XSTR(V) -> "V" en vez de "42", porque STR recibia el token sin
+    // expandir.  Se expande aqui, antes de meter la macro actual en el guard:
+    // durante la expansion del argumento la macro que se esta llamando todavia
+    // no esta oculta.
+    std::vector<std::vector<PPToken>> expanded_args;
+    expanded_args.reserve(args.size());
+    for (const auto& a : args) {
+        expanded_args.push_back(expand_impl(a, table, guard));
+    }
+
     // sustituir parametros en el cuerpo (ya sin los tokens #param que fueron stringificados)
-    auto substituted = table.substitute(stringified, mac->params, args, tok.loc);
+    auto substituted = table.substitute(stringified, mac->params,
+                                        args, expanded_args, tok.loc);
 
     // aplicar ## (token paste) despues de la sustitucion
     substituted = table.apply_token_paste(substituted);
@@ -1657,8 +1710,16 @@ std::vector<std::vector<PPToken>> MacroTable::collect_args(
             current_arg.push_back(t);
         } else if (t.type == PPTokenType::COMMA && depth == 1) {
             // separador de argumento solo al nivel mas externo
+            //
+            // Con variadicas se trocea mientras queden parametros FIJOS por
+            // llenar; a partir de ahi las comas pertenecen a __VA_ARGS__ y se
+            // pegan al ultimo argumento.  `params` guarda solo los nombrados,
+            // el `...` no esta ahi: restarle uno hacia que `L(a, ...)` no
+            // troceara nunca (0 < 0 es falso) y que `M(...)` funcionase de
+            // milagro, porque 0 - 1 hace underflow a SIZE_MAX y entonces
+            // troceaba siempre.
             if (!mac.is_variadic ||
-                args.size() < mac.params.size() - 1) {
+                args.size() < mac.params.size()) {
                 args.push_back(std::move(current_arg));
                 current_arg.clear();
             } else {
@@ -1703,11 +1764,31 @@ std::vector<std::vector<PPToken>> MacroTable::collect_args(
 std::vector<PPToken> MacroTable::substitute(
     const std::vector<PPToken>& body,
     const std::vector<std::string>& params,
-    const std::vector<std::vector<PPToken>>& args,
+    const std::vector<std::vector<PPToken>>& raw_args,
+    const std::vector<std::vector<PPToken>>& expanded_args,
     const SourceLocation& loc)
 {
     std::vector<PPToken> result;
     result.reserve(body.size());
+
+    // @brief Indica si la posicion i del cuerpo toca un `##`.
+    //
+    // Un parametro pegado con `##` usa su argumento SIN expandir; en cualquier
+    // otro sitio usa el expandido.  De ahi que haya que mirar a los dos lados,
+    // saltando los blancos que no forman parte del operador.
+    auto touches_paste = [&body](size_t i) {
+        size_t j = i + 1;
+        while (j < body.size() && body[j].type == PPTokenType::WHITESPACE) ++j;
+        if (j < body.size() && body[j].type == PPTokenType::HASHHASH) return true;
+        if (i == 0) return false;
+        size_t k = i;
+        do {
+            --k;
+            if (body[k].type == PPTokenType::HASHHASH) return true;
+            if (body[k].type != PPTokenType::WHITESPACE) return false;
+        } while (k > 0);
+        return false;
+    };
 
     for (size_t i = 0; i < body.size(); ++i) {
         const PPToken& bt = body[i];
@@ -1715,6 +1796,9 @@ std::vector<PPToken> MacroTable::substitute(
             result.push_back(bt);
             continue;
         }
+
+        const auto& args = touches_paste(i) ? raw_args : expanded_args;
+
         // buscar si el ident es un parametro formal
         auto it = std::find(params.begin(), params.end(), bt.value);
         if (it != params.end()) {
@@ -1723,6 +1807,46 @@ std::vector<PPToken> MacroTable::substitute(
                 // insertar los tokens del argumento correspondiente
                 result.insert(result.end(), args[idx].begin(), args[idx].end());
             }
+        } else if (bt.value == "__VA_OPT__") {
+            // __VA_OPT__(contenido): el contenido se emite solo si la parte
+            // variadica trae ALGUN token.  Es la forma estandar de resolver la
+            // coma colgante de `LOG(fmt, ...)` cuando se llama sin variadicos,
+            // que sin esto genera C invalido.
+            size_t j = i + 1;
+            while (j < body.size() &&
+                   body[j].type == PPTokenType::WHITESPACE) ++j;
+            if (j >= body.size() || body[j].type != PPTokenType::LPAREN) {
+                // sin parentesis no es el operador: se emite tal cual
+                result.push_back(bt);
+                continue;
+            }
+
+            // recoger el contenido respetando el anidamiento de parentesis
+            std::vector<PPToken> inner;
+            int depth = 1;
+            size_t k = j + 1;
+            for (; k < body.size() && depth > 0; ++k) {
+                if (body[k].type == PPTokenType::LPAREN)  ++depth;
+                if (body[k].type == PPTokenType::RPAREN) {
+                    --depth;
+                    if (depth == 0) break;
+                }
+                inner.push_back(body[k]);
+            }
+
+            bool has_varargs = false;
+            for (size_t vi = params.size(); vi < raw_args.size(); ++vi) {
+                if (!raw_args[vi].empty()) { has_varargs = true; break; }
+            }
+
+            if (has_varargs) {
+                // El contenido puede llevar parametros y __VA_ARGS__, asi que
+                // pasa por la misma sustitucion.
+                auto sub = substitute(inner, params, raw_args,
+                                      expanded_args, loc);
+                result.insert(result.end(), sub.begin(), sub.end());
+            }
+            i = k;   // saltar hasta el ')' de cierre
         } else if (bt.value == "__VA_ARGS__") {
             // insertar todos los argumentos variadicos separados por coma
             for (size_t vi = params.size(); vi < args.size(); ++vi) {
@@ -1743,40 +1867,62 @@ std::vector<PPToken> MacroTable::apply_token_paste(
 {
     std::vector<PPToken> result;
     result.reserve(tokens.size());
-    size_t i = 0;
-    while (i < tokens.size()) {
-        // verificar si hay HASHHASH adelante (saltando espacios intermedios)
-        // solo consumir whitespace si efectivamente hay un ## despues
-        size_t j = i;
-        if (tokens[i].type == PPTokenType::WHITESPACE) {
-            // buscar el proximo token no-espacio
-            while (j < tokens.size() && tokens[j].type == PPTokenType::WHITESPACE) ++j;
-            if (j >= tokens.size() || tokens[j].type != PPTokenType::HASHHASH) {
-                // no hay ##: preservar el whitespace original
-                result.push_back(tokens[i++]);
-                continue;
-            }
-            // hay ## despues del whitespace: descartar el whitespace (parte del operador)
-            i = j;
+
+    // @brief Blanco que puede rodear al operador sin formar parte de el.
+    auto is_blank = [](const PPToken& t) {
+        return t.type == PPTokenType::WHITESPACE ||
+               t.type == PPTokenType::NEWLINE;
+    };
+
+    // Un operando de `##` puede quedar VACIO -- ocurre en cuanto se pasa un
+    // argumento vacio, como en CAT(x,) -- y entonces el resultado del pegado es
+    // simplemente el otro operando.  La version anterior daba por hecho que
+    // siempre habia un token a cada lado y, al no encontrarlo, dejaba el `##`
+    // literal en la salida: CAT(,) producia "## " en vez de nada.
+    //
+    // Se lleva un indicador en vez de mirar hacia adelante, porque asi el caso
+    // "no hay izquierdo", "no hay derecho" y "no hay ninguno" salen solos.
+    bool pending = false;   // se acaba de ver un ##
+
+    for (const PPToken& t : tokens) {
+        if (t.type == PPTokenType::HASHHASH) {
+            // el blanco a ambos lados pertenece al operador
+            while (!result.empty() && is_blank(result.back())) result.pop_back();
+            pending = true;
+            continue;
         }
-        // verificar si hay HASHHASH delante (con posibles espacios en medio)
-        j = i + 1;
-        while (j < tokens.size() && tokens[j].type == PPTokenType::WHITESPACE) ++j;
-        if (j < tokens.size() && tokens[j].type == PPTokenType::HASHHASH) {
-            size_t k = j + 1;
-            while (k < tokens.size() && tokens[k].type == PPTokenType::WHITESPACE) ++k;
-            if (k < tokens.size()) {
-                // pegar los tokens izquierdo y derecho
-                PPToken pasted(PPTokenType::IDENT,
-                               tokens[i].value + tokens[k].value,
-                               tokens[i].loc);
-                result.push_back(std::move(pasted));
-                i = k + 1;
-                continue;
-            }
+
+        if (is_blank(t)) {
+            if (!pending) result.push_back(t);
+            continue;
         }
-        result.push_back(tokens[i++]);
+
+        if (pending) {
+            pending = false;
+            if (!result.empty() && !is_blank(result.back())) {
+                // los dos operandos existen: se pegan de verdad
+                const std::string joined = result.back().value + t.value;
+                // El tipo se deduce del texto resultante: un `1 ## 2` da un
+                // numero, no un identificador, y marcarlo mal lo expondria a
+                // una expansion de macro que no le corresponde.
+                const PPTokenType ty =
+                    (!joined.empty() && std::isdigit(
+                        static_cast<unsigned char>(joined[0])))
+                    ? PPTokenType::NUMBER
+                    : PPTokenType::IDENT;
+                result.back() = PPToken(ty, joined, result.back().loc);
+            } else {
+                // operando izquierdo vacio: queda el derecho tal cual
+                result.push_back(t);
+            }
+            continue;
+        }
+
+        result.push_back(t);
     }
+
+    // Un `##` al final sin operando derecho no necesita nada: el izquierdo ya
+    // esta en result.
     return result;
 }
 

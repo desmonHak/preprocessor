@@ -76,6 +76,61 @@ std::vector<PPToken> PPEvaluator::resolve_defined(
     return out;
 }
 
+/**
+ * @brief Valor numerico de una constante de caracter.
+ *
+ * Solo se contempla el caso de un unico caracter, que es el que aparece en las
+ * condiciones del preprocesador.  Se reconocen las secuencias de escape
+ * habituales; una constante multi-caracter se evalua por su ultimo caracter,
+ * que es lo que hacen gcc y clang.
+ *
+ * @param t Token CHAR_LIT, con sus comillas simples incluidas.
+ * @return Valor entero del caracter.
+ */
+static int64_t char_literal_value(const PPToken& t) {
+    const std::string& v = t.value;
+
+    // quitar las comillas simples delimitadoras
+    size_t i   = (!v.empty() && v.front() == 0x27) ? 1 : 0;
+    size_t end = v.size();
+    if (end > i && v[end - 1] == 0x27) --end;
+
+    int64_t value = 0;
+    while (i < end) {
+        unsigned char c = static_cast<unsigned char>(v[i]);
+
+        // Las secuencias de escape se resuelven por CODIGO y no escribiendo
+        // el literal correspondiente: asi el codigo no depende de como
+        // sobreviva una barra invertida a las herramientas que lo editan.
+        if (c == 0x5C && i + 1 < end) {      // 0x5C = barra invertida
+            ++i;
+            switch (v[i]) {
+                case 'n':  c = 0x0A; break;  // salto de linea
+                case 't':  c = 0x09; break;  // tabulador
+                case 'r':  c = 0x0D; break;  // retorno de carro
+                case 'a':  c = 0x07; break;  // alerta
+                case 'b':  c = 0x08; break;  // retroceso
+                case 'f':  c = 0x0C; break;  // salto de pagina
+                case 'v':  c = 0x0B; break;  // tabulador vertical
+                case '0':  c = 0x00; break;  // nulo
+                case '"': c = 0x22; break;  // comilla doble
+                default:
+                    // 0x5C y 0x27 (barra y comilla simple) caen aqui, igual
+                    // que cualquier escape no reconocido: el caracter vale
+                    // por si mismo.
+                    c = static_cast<unsigned char>(v[i]);
+                    break;
+            }
+        }
+
+        // Una constante multi-caracter se queda con el ULTIMO, que es lo que
+        // hacen gcc y clang en una condicion del preprocesador.
+        value = static_cast<int64_t>(c);
+        ++i;
+    }
+    return value;
+}
+
 int64_t PPEvaluator::evaluate(const std::vector<PPToken>& tokens,
                                const SourceLocation& loc) {
     // `defined` PRIMERO, y solo despues expandir.
@@ -295,6 +350,16 @@ int64_t PPEvaluator::parse_primary() {
     if (check(PPTokenType::NUMBER)) {
         PPToken t = consume();
         return parse_number_literal(t);
+    }
+
+    // constante de caracter: 'A', '0', '\\n'...
+    //
+    // En una expresion del preprocesador vale su valor numerico, asi que
+    // `#if 'A' == 65` es verdadero.  Sin esto, cualquier condicion con una
+    // constante de caracter abortaba el fichero entero.
+    if (check(PPTokenType::CHAR_LIT)) {
+        PPToken t = consume();
+        return char_literal_value(t);
     }
 
     // identificadores: defined(), true, false, o macros residuales
