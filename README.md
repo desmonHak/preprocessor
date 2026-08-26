@@ -837,6 +837,12 @@ vpp archivo.vel
 # Preprocesar y guardar en un archivo de salida
 vpp archivo.vel -o archivo_pp.vel
 
+# Precargar las macros que predefine un compilador concreto
+vpp --predef-from "gcc -dM -E -" archivo.c
+
+# Precargar directivas desde un fichero (sirve para cualquier lenguaje)
+vpp --predef plataforma.def archivo.txt
+
 # Definir macros desde la linea de comandos
 vpp -DDEBUG -DVERSION=2 archivo.vel
 
@@ -855,6 +861,54 @@ vpp --version
 # Ayuda
 vpp --help
 ```
+
+---
+
+## Precargar macros de otro compilador
+
+Un preprocesador que quiera tragarse codigo real necesita las macros que el
+compilador de destino da por hechas.  La diferencia es enorme: vpp predefine 3
+macros y `gcc` predefine 412.  Sin ellas, las cabeceras de la biblioteca
+estandar toman ramas equivocadas -- creen que no hay GCC, por ejemplo -- y la
+salida no compila aunque el preprocesado no haya dado un solo error.
+
+Se resuelve con dos opciones **genericas**: no hay ningun `--emulate=gcc` que
+hornee dentro de vpp el conocimiento de un compilador o de un lenguaje.
+
+```bash
+# desde la salida de un comando
+vpp --predef-from "gcc -dM -E -" -I/usr/include programa.c
+
+# desde un fichero de directivas escrito a mano
+vpp --predef mi_plataforma.def programa.lo-que-sea
+```
+
+Que la variante de comando apunte al **binario exacto** no es un detalle: es lo
+que permite que convivan varios compiladores y varias versiones en la misma
+maquina sin que vpp sepa nada de ninguno.
+
+```bash
+vpp --predef-from "gcc-12 -dM -E -"            ...
+vpp --predef-from "clang-15 -dM -E -x c++ -"   ...
+vpp --predef-from "arm-none-eabi-gcc -dM -E -" ...
+```
+
+Y como lo que se carga es simplemente **texto con directivas**, el mecanismo no
+esta atado a C.  Para un lenguaje propio basta con un fichero:
+
+```
+#define OBJETIVO_ES_64  1
+#define NOMBRE_ABI      "sysv"
+#define ALINEAR(x)      (((x) + 7) & ~7)
+```
+
+**Por que se procesa como fuente y no como una lista `nombre=valor`.**  Un
+volcado real trae macros funcion (`#define __glibcxx_assert(cond)`) y valores de
+varios tokens (`#define __SIZE_TYPE__ long unsigned int`).  Ninguna de las dos
+cosas cabe en un `nombre=valor`, asi que el bloque pasa por el pipeline completo
+y solo se conservan las macros; la salida se descarta.
+
+Un `-D` posterior gana al bloque precargado, por ser mas especifico.
 
 ---
 
@@ -953,6 +1007,31 @@ x = A
 ", b"m.c", ctypes.byref(out))
 print(out.value.decode())
 ```
+
+### Precargar macros desde el ABI en C
+
+Las mismas tres vias que ofrece la linea de ordenes, para quien embebe la
+biblioteca:
+
+```c
+/* el texto lo consigue el programa anfitrion como quiera */
+vpp_add_predef_text(pp, "#define OBJETIVO 64
+#define DOBLE(x) ((x)*2)
+");
+
+/* desde un fichero */
+vpp_add_predef_file(pp, "plataforma.def");
+
+/* desde la salida de un comando -- OJO: esto LANZA UN PROCESO */
+vpp_add_predef_command(pp, "gcc-12 -dM -E -");
+```
+
+`vpp_add_predef_text` es la primitiva recomendada al embeber: no toca el sistema
+de ficheros ni lanza procesos, asi que el anfitrion mantiene el control de como
+obtiene esas macros.  Si esa restriccion no aplica, la variante de comando
+ahorra el trabajo intermedio.
+
+---
 
 ### Reglas de propiedad de memoria
 
@@ -1229,6 +1308,34 @@ ctest --output-on-failure -V
 ./vpp_test_variables       ; directiva #set y todos los operadores de asignacion
 ./vpp_test_float_conv      ; macros de flotantes y conversion numerica
 ```
+
+### Conformidad con el preprocesador de C
+
+Ademas de los tests unitarios hay dos suites cuyo oraculo es un compilador de
+verdad.  Existen porque los unitarios comprueban lo que vpp **construyo**, no lo
+que el estandar **exige**, y por eso podian estar en verde mientras
+`#if defined(X)` estaba roto.
+
+| Suite | Que mide |
+| :---- | :------- |
+| `vpp_test_conformance` | 25 casos preprocesados con vpp y con `gcc`/`clang`, comparando las salidas |
+| `vpp_test_system_headers` | Preprocesa un fuente con cabeceras del sistema, **compila** la salida y **ejecuta** el binario |
+
+La comparacion es a nivel de **token**, no de linea: dos salidas con los mismos
+tokens compilan igual, y vpp diverge de gcc en el reparto por lineas a
+proposito, conservando los saltos de los comentarios de bloque para no
+descuadrar la numeracion de las etapas siguientes.
+
+Los casos que se sepa que fallan van en `tests/conformance/xfail.txt` con la
+explicacion de que falla.  Uno listado que falla no rompe la suite; uno que
+**pasa** se reporta como XPASS y si la rompe, para obligar a sacarlo de la lista
+al arreglar el bug.  Asi el fichero no puede quedarse mintiendo sobre el estado
+real.  Ahora mismo la lista esta vacia: 25/25.
+
+Las dos suites se registran solo si hay un compilador de referencia; sin el se
+omiten en vez de dar un rojo que no dice nada del codigo.
+
+---
 
 ### Cobertura de tests
 

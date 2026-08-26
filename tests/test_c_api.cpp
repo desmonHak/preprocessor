@@ -208,6 +208,69 @@ static void test_include_resolver_not_found() {
     vpp_destroy(pp);
 }
 
+/**
+ * @brief Precarga de macros por texto.
+ *
+ * Se comprueba con una macro FUNCION y con un valor de VARIOS TOKENS a
+ * proposito: son justo los dos casos que no caben en un nombre=valor y que
+ * obligan a que la precarga pase por el pipeline completo.  Un volcado real de
+ * macros predefinidas viene lleno de ambos.
+ */
+static void test_predef_text() {
+    vpp_preprocessor* pp = vpp_create();
+    char* out = nullptr;
+
+    const char* predef =
+        "#define ANCHO_PUNTERO 64\n"
+        "#define TIPO_TAMANO long unsigned int\n"
+        "#define DOBLE(x) ((x)*2)\n";
+
+    CHECK(vpp_add_predef_text(pp, predef) == VPP_OK,
+          "vpp_add_predef_text acepta el bloque");
+
+    vpp_status st = vpp_process(pp,
+        "a=ANCHO_PUNTERO b=TIPO_TAMANO c=DOBLE(21)\n", "t.c", &out);
+
+    CHECK(st == VPP_OK, "el fuente se procesa con las macros precargadas");
+    CHECK(contains(out, "a=64"), "macro simple precargada");
+    CHECK(contains(out, "b=long unsigned int"),
+          "valor de varios tokens precargado");
+    CHECK(contains(out, "c=((21)*2)"), "macro funcion precargada");
+
+    vpp_string_free(out);
+    vpp_destroy(pp);
+}
+
+/** @brief Un -D posterior pisa lo que traiga el bloque precargado. */
+static void test_predef_precedencia() {
+    vpp_preprocessor* pp = vpp_create();
+    char* out = nullptr;
+
+    vpp_add_predef_text(pp, "#define NIVEL 1\n");
+    vpp_add_define(pp, "NIVEL=9");
+
+    vpp_process(pp, "n=NIVEL\n", "t.c", &out);
+    CHECK(contains(out, "n=9"),
+          "el -D es mas especifico y gana al bloque precargado");
+
+    vpp_string_free(out);
+    vpp_destroy(pp);
+}
+
+/** @brief Las tres variantes rechazan argumentos nulos. */
+static void test_predef_null() {
+    vpp_preprocessor* pp = vpp_create();
+    CHECK(vpp_add_predef_text(nullptr, "x") == VPP_ERR_INVALID_ARG,
+          "vpp_add_predef_text rechaza un handle NULL");
+    CHECK(vpp_add_predef_text(pp, nullptr) == VPP_ERR_INVALID_ARG,
+          "vpp_add_predef_text rechaza un texto NULL");
+    CHECK(vpp_add_predef_file(pp, nullptr) == VPP_ERR_INVALID_ARG,
+          "vpp_add_predef_file rechaza una ruta NULL");
+    CHECK(vpp_add_predef_command(pp, nullptr) == VPP_ERR_INVALID_ARG,
+          "vpp_add_predef_command rechaza un comando NULL");
+    vpp_destroy(pp);
+}
+
 /** @brief Inspeccion de la tabla de macros. */
 static void test_macro_inspection() {
     vpp_preprocessor* pp = vpp_create();
@@ -323,6 +386,9 @@ int main() {
     test_diagnostics();
     test_include_resolver();
     test_include_resolver_not_found();
+    test_predef_text();
+    test_predef_precedencia();
+    test_predef_null();
     test_macro_inspection();
     test_null_safety();
     test_process_file_missing();

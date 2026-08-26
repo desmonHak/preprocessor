@@ -29,6 +29,31 @@ using IncludeResolver = std::function<
                 bool is_system)>;
 
 /**
+ * @brief De donde sale un conjunto de macros a precargar.
+ */
+enum class PredefKind : uint8_t {
+    Text,    ///< El propio texto de las directivas.
+    File,    ///< Ruta de un fichero que las contiene.
+    Command  ///< Comando cuya salida estandar las contiene.
+};
+
+/**
+ * @brief Un conjunto de macros a precargar antes de procesar el fuente.
+ *
+ * NO es una lista de pares nombre=valor: es TEXTO con directivas, que se
+ * procesa con el pipeline normal y del que solo se conservan las macros.  Esa
+ * decision es lo que hace el mecanismo util de verdad -- un volcado real de
+ * macros predefinidas trae macros funcion (`#define __glibcxx_assert(cond)`) y
+ * valores de varios tokens (`#define __SIZE_TYPE__ long unsigned int`), que no
+ * caben en un nombre=valor -- y ademas lo mantiene independiente del lenguaje:
+ * el fichero es simplemente un fuente de directivas, venga de donde venga.
+ */
+struct PredefSource {
+    PredefKind  kind;   ///< Como interpretar `value`.
+    std::string value;  ///< Texto, ruta o comando, segun `kind`.
+};
+
+/**
  * @brief Opciones de configuracion del preprocesador.
  */
 struct PPOptions {
@@ -38,6 +63,17 @@ struct PPOptions {
     std::vector<std::string> include_paths; ///< Rutas de busqueda para #include <...>
     std::vector<std::string> import_paths;  ///< Rutas de busqueda para #import (libreria de macros vpp)
     std::vector<std::string> predefines;    ///< Macros a predefinir (formato "NAME" o "NAME=val")
+    /**
+     * @brief Conjuntos de macros a precargar, en orden.
+     *
+     * Sirve para traerse las macros que un compilador concreto predefine.  Se
+     * apunta al BINARIO exacto (`gcc-12 -dM -E -`, `clang-15 -dM -E -x c++ -`)
+     * en lugar de a un nombre de compilador conocido: asi conviven varios
+     * compiladores y varias versiones en la misma maquina sin que vpp tenga que
+     * saber nada de ninguno, y el mecanismo vale igual para un lenguaje que no
+     * sea C.
+     */
+    std::vector<PredefSource> predef_sources;
     bool                 emit_line_markers; ///< Emite marcadores #line tras cada #include
 
     /** @brief Constructor con valores por defecto. */
@@ -146,6 +182,13 @@ public:
      */
     void add_define(const std::string& def);
 
+    /**
+     * @brief Registra un conjunto de macros a precargar.
+     * @param kind  Si `value` es texto, ruta de fichero o comando.
+     * @param value Texto de las directivas, ruta o comando.
+     */
+    void add_predef_source(PredefKind kind, const std::string& value);
+
 private:
     PPOptions          m_opts;          ///< Opciones del preprocesador
     DiagnosticEngine   m_diag;          ///< Motor de diagnosticos
@@ -166,6 +209,17 @@ private:
 
     // Contadores para macros dinamicas
     uint32_t m_counter; ///< Valor actual de __COUNTER__
+
+    /**
+     * @brief Precarga los conjuntos de macros de `predef_sources`.
+     *
+     * Cada uno se procesa como un fuente normal y su salida se descarta: lo que
+     * interesa es el efecto lateral sobre la tabla de macros.  Pasar por el
+     * pipeline completo, en vez de trocear nombre=valor, es lo que permite que
+     * un volcado real -- con macros funcion y valores de varios tokens -- entre
+     * intacto.
+     */
+    void load_predefines();
 
     /**
      * @brief Evalua el AST de un bloque y produce texto de salida.

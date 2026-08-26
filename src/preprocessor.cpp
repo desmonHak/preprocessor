@@ -13,9 +13,13 @@
 #include <ctime>
 #include <cstdio>
 #ifdef _WIN32
+    // Dispositivo nulo con el que se alimenta la entrada de los comandos, para
+    // que uno que lea de stdin termine en vez de quedarse colgado.
+    static const char* const kNullDevice = "NUL";
     #define VPP_POPEN  _popen
     #define VPP_PCLOSE _pclose
 #else
+    static const char* const kNullDevice = "/dev/null";
     #define VPP_POPEN  popen
     #define VPP_PCLOSE pclose
 #endif
@@ -61,9 +65,85 @@ void Preprocessor::add_define(const std::string& def) {
     }
 }
 
+void Preprocessor::add_predef_source(PredefKind kind,
+                                     const std::string& value) {
+    m_opts.predef_sources.push_back(PredefSource{kind, value});
+}
+
+void Preprocessor::load_predefines() {
+    for (const auto& src : m_opts.predef_sources) {
+        std::string text;
+        std::string label;
+
+        switch (src.kind) {
+            case PredefKind::Text:
+                text  = src.value;
+                label = "<predef>";
+                break;
+
+            case PredefKind::File: {
+                label = src.value;
+                std::ifstream ifs(src.value, std::ios::binary);
+                if (!ifs) {
+                    m_diag.error(SourceLocation(src.value, 0, 0),
+                        "no se pudo leer el fichero de macros predefinidas: "
+                        + src.value);
+                    continue;
+                }
+                text.assign((std::istreambuf_iterator<char>(ifs)),
+                             std::istreambuf_iterator<char>());
+                break;
+            }
+
+            case PredefKind::Command: {
+                label = "<" + src.value + ">";
+
+                // La entrada estandar del hijo se ata al dispositivo nulo.
+                //
+                // El caso de uso principal es precisamente un comando que LEE
+                // de stdin -- `gcc -dM -E -` es el ejemplo canonico -- y sin
+                // esto hereda el stdin de vpp y se queda esperando un EOF que
+                // no llega nunca: el proceso se cuelga indefinidamente en vez
+                // de fallar.  Se envuelve en parentesis para que la
+                // redireccion afecte al comando entero aunque traiga tuberias.
+                std::string cmd = "(" + src.value + ") < " + kNullDevice;
+
+                FILE* pipe = VPP_POPEN(cmd.c_str(), "r");
+                if (!pipe) {
+                    m_diag.error(SourceLocation(label, 0, 0),
+                        "no se pudo ejecutar el comando de macros "
+                        "predefinidas: " + src.value);
+                    continue;
+                }
+                char buf[4096];
+                while (std::fgets(buf, sizeof(buf), pipe)) text += buf;
+                VPP_PCLOSE(pipe);
+                break;
+            }
+        }
+
+        if (text.empty()) continue;
+
+        // Se procesa como un fuente cualquiera y la salida se tira: lo que
+        // importa es lo que quede en la tabla de macros.  Asi entran intactas
+        // las macros funcion y los valores de varios tokens, que es justo lo
+        // que trae un volcado real y lo que un nombre=valor no puede
+        // representar.
+        PPLexer  lexer(text, label, m_diag, m_opts.lexer);
+        PPParser parser(lexer.tokenize(), m_diag);
+        auto ast = parser.parse();
+
+        std::string descartado;
+        eval_block(static_cast<const BlockNode&>(*ast), descartado);
+    }
+}
+
 std::string Preprocessor::process(const std::string& source,
                                    const std::string& filename) {
-    // registrar predefiniciones desde las opciones
+    // Primero los conjuntos precargados y despues los -D sueltos, para que un
+    // -D pueda pisar lo que traiga el volcado: es mas especifico.
+    load_predefines();
+
     for (const auto& def : m_opts.predefines) {
         add_define(def);
     }

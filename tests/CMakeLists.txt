@@ -52,6 +52,19 @@ if(VPP_REF_CC AND TARGET vpp)
             -DXFAIL_FILE=${CMAKE_CURRENT_SOURCE_DIR}/conformance/xfail.txt
             -P ${CMAKE_CURRENT_SOURCE_DIR}/conformance/run_conformance.cmake)
     set_tests_properties(vpp_test_conformance PROPERTIES TIMEOUT 180)
+
+    # Prueba de integracion: el corpus mide casos aislados, esto mide que vpp
+    # sirva para codigo real.  Preprocesa un fuente con cabeceras del sistema,
+    # compila la salida y ejecuta el binario.  Es lo que justifica --predef-from:
+    # sin las macros predefinidas del compilador, esas cabeceras toman ramas
+    # equivocadas y el resultado no compila aunque el preprocesado no de errores.
+    add_test(NAME vpp_test_system_headers
+        COMMAND ${CMAKE_COMMAND}
+            -DVPP=$<TARGET_FILE:vpp>
+            -DCC=${VPP_REF_CC}
+            -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/sys_headers
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/conformance/run_system_headers.cmake)
+    set_tests_properties(vpp_test_system_headers PROPERTIES TIMEOUT 180)
     message(STATUS "  Conformidad   : ${VPP_REF_CC}")
 else()
     message(STATUS "  Conformidad   : sin compilador de referencia; test omitido")

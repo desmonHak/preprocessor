@@ -37,6 +37,9 @@ static void print_help(const char* prog) {
         << "  -D NAME[=val]     Define una macro antes de procesar\n"
         << "  -I <ruta>         Anade ruta de busqueda para #include <...>\n"
         << "  -M <ruta>         Anade ruta de busqueda para #import <...>\n"
+        << "  --predef <f>      Precarga las directivas de un fichero\n"
+        << "  --predef-from <c> Precarga las directivas que emita un comando,\n"
+        << "                    p.ej. --predef-from \"gcc -dM -E -\"\n"
         << "  --line-markers    Emite marcadores #line tras cada #include\n"
         << "  --no-expand       Desactiva la expansion de macros en texto\n"
         << "  --stdin           Lee el fuente de la entrada estandar\n"
@@ -100,6 +103,7 @@ int main(int argc, char* argv[]) {
     std::string input_file;
     std::string output_file;
     std::vector<std::string> defines;
+    std::vector<vpp::PredefSource> predef_sources;
     std::vector<std::string> include_paths;
     std::vector<std::string> import_paths;
     bool line_markers = false;
@@ -155,6 +159,26 @@ int main(int argc, char* argv[]) {
             }
             continue;
         }
+        // Precarga de macros desde un fichero de directivas.  Es generico: no
+        // sabe nada de compiladores ni de lenguajes, solo dice "carga estas
+        // directivas antes de empezar".
+        if (std::strcmp(argv[i], "--predef") == 0 && i + 1 < argc) {
+            predef_sources.push_back(
+                vpp::PredefSource{vpp::PredefKind::File, argv[++i]});
+            continue;
+        }
+
+        // Precarga desde la salida de un comando.  Se apunta al BINARIO exacto
+        // en lugar de a un nombre de compilador conocido, de modo que conviven
+        // varias versiones y varios toolchains en la misma maquina:
+        //     --predef-from "gcc-12 -dM -E -"
+        //     --predef-from "clang-15 -dM -E -x c++ -"
+        if (std::strcmp(argv[i], "--predef-from") == 0 && i + 1 < argc) {
+            predef_sources.push_back(
+                vpp::PredefSource{vpp::PredefKind::Command, argv[++i]});
+            continue;
+        }
+
         if (std::strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             output_file = argv[++i];
             continue;
@@ -189,6 +213,7 @@ int main(int argc, char* argv[]) {
     opts.include_paths     = include_paths;
     opts.import_paths      = import_paths;
     opts.predefines        = defines;
+    opts.predef_sources    = predef_sources;
 
     // --- leer el fuente ---
     std::string source;
