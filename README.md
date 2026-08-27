@@ -996,6 +996,10 @@ vpp --predef plataforma.def archivo.txt
 # Resolver __has_builtin y companeros preguntandole al compilador objetivo
 vpp --capabilities-from "gcc -E -P -x c" archivo.c
 
+# Recordar entre ejecuciones en otro sitio, o no recordar nada
+vpp --cache-dir build/.vpp-cache archivo.c
+vpp --no-cache archivo.c
+
 # Definir macros desde la linea de comandos
 vpp -DDEBUG -DVERSION=2 archivo.vel
 
@@ -1063,6 +1067,78 @@ y solo se conservan las macros; la salida se descarta.
 
 Un `-D` posterior gana al bloque precargado, por ser mas especifico.
 
+
+---
+
+## Memoria entre ejecuciones
+
+Preguntarle algo a un compilador cuesta lanzar un proceso.  El volcado de
+`--predef-from` se pide en CADA invocacion de vpp, asi que compilar N ficheros
+son N procesos para obtener exactamente lo mismo; y una unidad de C++ moderna
+consulta capacidades decenas de veces.  vpp recuerda ambas cosas entre
+ejecuciones:
+
+```bash
+# Por omision, en la cache del usuario.  No hay que hacer nada.
+vpp --predef-from "gcc -dM -E -" --capabilities-from "gcc -E -P -x c" a.c
+
+# En otro sitio, para una compilacion aislada o reproducible.
+vpp --cache-dir build/.vpp-cache ... a.c
+
+# Sin recordar nada, para medir el coste real o descartar la memoria.
+vpp --no-cache ... a.c
+```
+
+Medido en Windows sobre un fuente con tres consultas: **363 ms en frio, 24 ms en
+caliente, ~200 ms sin memoria**.
+
+### Por que la clave no es la orden
+
+Lo obvio seria guardar las respuestas bajo `"gcc -E -P -x c"`.  Eso miente en
+dos direcciones: `gcc` y `/usr/bin/gcc` son el mismo compilador con dos cadenas
+distintas, y -- lo que de verdad hace dano -- **la misma cadena pasa a
+significar otra cosa en cuanto se actualiza el compilador**.  Una memoria con esa
+clave devolveria respuestas viejas para siempre, sin dar la cara por ningun
+sitio.
+
+La clave es la identidad del BINARIO -- su ruta real, su tamano y su fecha, que
+cambian los tres al actualizarlo -- mas la orden entera, porque los flags
+cambian la respuesta tanto como el binario: `-x c++` habilita operadores que en
+C no existen, y `--target=` cambia lo que contestan los predicados de objetivo.
+Si el ejecutable no se puede localizar, **no se recuerda nada**: sin saber a
+quien se pregunta no hay forma de notar que ha cambiado.
+
+### Que NO se guarda
+
+- **`__has_include`**, porque pregunta por las rutas de busqueda de quien
+  compila, no por el compilador.  Es un hecho del proyecto, no suyo, y
+  recordarlo daria respuestas de otro proyecto.
+- **Las consultas que fallaron.**  Un fallo pasajero -- el compilador ocupado,
+  un PATH a medio poner -- no es una respuesta, y guardarlo lo dejaria escrito
+  como una propiedad del compilador: el error sobreviviria a su causa.
+
+### Compilaciones en paralelo
+
+Una compilacion con `-j` lanza muchos vpp a la vez sobre la misma memoria.  No
+hay ningun cerrojo y no hace falta: hay un fichero por compilador y se escribe
+entero en un temporal que despues se renombra encima, que es atomico en los dos
+sistemas.  Nadie lee jamas un fichero a medias.  Si dos procesos se pisan, lo
+peor que pasa es que una respuesta se vuelva a preguntar -- cada entrada es una
+funcion pura de (compilador, pregunta), asi que dos escritores no pueden
+discrepar.
+
+Los ficheros son texto y se pueden mirar a ojo:
+
+```
+$ cat ~/.cache/vpp/v1/496235fd9618b9f5.facts
+# vpp facts v1
+__has_builtin __builtin_expect	1
+#defined __has_cpp_attribute	0
+```
+
+Para limpiarla, se borra el directorio.  La version del formato va en el nombre
+(`v1/`), asi que un cambio de formato deja lo viejo donde esta en lugar de
+leerlo mal.
 ---
 
 ## Uso como biblioteca (C++ API)
@@ -1463,6 +1539,8 @@ ctest --output-on-failure -V
 ./vpp_test_import          ; #import y rutas de modulos
 ./vpp_test_c_api           ; el ABI en C
 ./vpp_test_include_search  ; busqueda de inclusiones e #include_next
+./vpp_test_compiler_id     ; identidad del compilador
+./vpp_test_facts_cache     ; memoria entre ejecuciones
 ```
 
 ### Integracion continua
@@ -1538,6 +1616,8 @@ omiten en vez de dar un rojo que no dice nada del codigo.
 | `vpp_test_import`      | #import, rutas de modulos y extensiones del dialecto           |
 | `vpp_test_c_api`       | El ABI en C completo: handles, diagnosticos, propiedad de la memoria |
 | `vpp_test_include_search` | Busqueda de inclusiones: precedencia de rutas, vecino relativo, `#include_next` |
+| `vpp_test_compiler_id` | Identificacion del compilador: extraer el ejecutable, buscarlo por el PATH, y que la huella cambie al cambiar el binario o los flags |
+| `vpp_test_facts_cache` | Memoria entre ejecuciones: persistencia, separacion por compilador, fusion de escrituras y lo que se niega a guardar |
 
 ---
 
@@ -1558,6 +1638,11 @@ preprocessor/
 |       +-- pp_evaluator.h    evaluador de expresiones #if
 |       +-- pp_include.h      busqueda de #include, #include_next e #import
 |       +-- pp_capabilities.h consulta al compilador objetivo para __has_*
+|       +-- pp_system.h        entorno y rutas de plataforma
+|       +-- pp_atomic_write.h  escribir un fichero sin que se lea a medias
+|       +-- pp_compiler_id.h   identidad del compilador (clave de la memoria)
+|       +-- pp_facts_cache.h   memoria de respuestas cortas, por compilador
+|       +-- pp_command_cache.h memoria de la salida de un comando
 |       +-- pp_diagnostics.h  sistema de errores y advertencias
 |       +-- preprocessor.h    clase principal (API en C++)
 |       +-- vpp_c.h           ABI en C, estable entre compiladores
@@ -1568,6 +1653,11 @@ preprocessor/
 |   +-- pp_evaluator.cpp
 |   +-- pp_include.cpp
 |   +-- pp_capabilities.cpp
+|   +-- pp_system.cpp
+|   +-- pp_atomic_write.cpp
+|   +-- pp_compiler_id.cpp
+|   +-- pp_facts_cache.cpp
+|   +-- pp_command_cache.cpp
 |   +-- pp_diagnostics.cpp
 |   +-- preprocessor.cpp      eval_array_def, eval_exec, eval_set
 |   +-- vpp_c.cpp             implementacion del ABI en C
@@ -1585,6 +1675,8 @@ preprocessor/
 |   +-- test_import.cpp           tests de #import
 |   +-- test_c_api.cpp            tests del ABI en C
 |   +-- test_include_search.cpp   tests de la busqueda de inclusiones
+|   +-- test_compiler_id.cpp      tests de la identidad del compilador
+|   +-- test_facts_cache.cpp      tests de la memoria entre ejecuciones
 |   +-- check_exports.cmake       la biblioteca compartida solo exporta vpp_*
 |   +-- conformance/              suites contra un compilador de verdad
 |       +-- cases/                corpus de casos del estandar de C

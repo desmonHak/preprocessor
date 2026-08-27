@@ -6,6 +6,9 @@
 #include "preprocessor/preprocessor.h"
 #include "preprocessor/pp_lexer.h"
 #include "preprocessor/pp_parser.h"
+#include "preprocessor/pp_system.h"
+#include "preprocessor/pp_compiler_id.h"
+#include "preprocessor/pp_command_cache.h"
 #include <fstream>
 #include <sstream>
 #include <filesystem>
@@ -88,6 +91,12 @@ bool Preprocessor::can_answer_capability(const std::string& name) {
     return m_capabilities.is_known(name);
 }
 
+std::string Preprocessor::effective_cache_dir() const {
+    if (!m_opts.use_cache) return {};
+    if (!m_opts.cache_dir.empty()) return m_opts.cache_dir;
+    return user_cache_dir();
+}
+
 bool Preprocessor::name_is_defined(const std::string& name) {
     return m_macros.is_defined(name) ||
            (is_capability_operator(name) && can_answer_capability(name));
@@ -154,6 +163,14 @@ void Preprocessor::load_predefines() {
             case PredefKind::Command: {
                 label = "<" + src.value + ">";
 
+                // La memoria de la salida importa mas aqui que en ningun otro
+                // sitio: este volcado no se pide unas cuantas veces sino UNA
+                // POR INVOCACION de vpp, asi que compilar N ficheros son N
+                // procesos lanzados para obtener exactamente lo mismo.
+                const CommandOutputCache cache(
+                    effective_cache_dir(), CompilerId::fingerprint(src.value));
+                if (cache.load(text)) break;
+
                 // La entrada estandar del hijo se ata al dispositivo nulo.
                 //
                 // El caso de uso principal es precisamente un comando que LEE
@@ -173,7 +190,13 @@ void Preprocessor::load_predefines() {
                 }
                 char buf[4096];
                 while (std::fgets(buf, sizeof(buf), pipe)) text += buf;
-                VPP_PCLOSE(pipe);
+                const int status = VPP_PCLOSE(pipe);
+
+                // Solo se recuerda lo que salio BIEN.  Guardar la salida de una
+                // invocacion fallida dejaria escrito un problema pasajero como
+                // si fuera lo que ese compilador predefine, y el error
+                // sobreviviria a su causa en todas las ejecuciones siguientes.
+                if (status == 0) cache.store(text);
                 break;
             }
         }
@@ -200,6 +223,7 @@ std::string Preprocessor::process(const std::string& source,
     // aqui y no en la primera consulta importa: hay preguntas -- si un operador
     // existe siquiera -- que se hacen antes que ninguna consulta de valor, y
     // hasta entonces el oraculo diria que no hay compilador.
+    m_capabilities.set_cache_dir(effective_cache_dir());
     m_capabilities.set_command(m_opts.capabilities_command);
 
     // Primero los conjuntos precargados y despues los -D sueltos, para que un

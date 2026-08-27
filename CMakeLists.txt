@@ -100,6 +100,11 @@ set(VPP_SOURCES
     src/pp_parser.cpp
     src/pp_macro.cpp
     src/pp_evaluator.cpp
+    src/pp_system.cpp
+    src/pp_atomic_write.cpp
+    src/pp_compiler_id.cpp
+    src/pp_facts_cache.cpp
+    src/pp_command_cache.cpp
     src/pp_capabilities.cpp
     src/pp_include.cpp
     src/preprocessor.cpp

@@ -95,12 +95,35 @@ struct PPOptions {
      * Vacio significa que no hay a quien preguntar y esos operadores valen 0.
      */
     std::string capabilities_command;
+
+    /**
+     * @brief Donde se recuerda entre ejecuciones lo que contesta el compilador.
+     *
+     * Lo que se guarda son hechos sobre un COMPILADOR -- que tenga
+     * `__builtin_expect`, que macros predefine -- no sobre un proyecto, asi que
+     * por omision la memoria es del usuario y se comparte entre todos sus
+     * proyectos en vez de calentarse una vez en cada uno.
+     *
+     * Vacio significa el sitio por omision (ver user_cache_dir); para
+     * desactivarla del todo esta use_cache.
+     */
+    std::string cache_dir;
+
+    /**
+     * @brief Si se recuerda algo entre ejecuciones.
+     *
+     * A false, cada ejecucion vuelve a preguntarle todo al compilador.  Sirve
+     * para medir el coste real de las consultas y para descartar la memoria
+     * cuando se sospecha de ella.
+     */
+    bool                 use_cache;
     bool                 emit_line_markers; ///< Emite marcadores #line tras cada #include
 
     /** @brief Constructor con valores por defecto. */
     PPOptions()
         : expand_macros(true)
         , track_includes(true)
+        , use_cache(true)
         , emit_line_markers(false) {}
 };
 
@@ -314,6 +337,17 @@ private:
      * @return true si vpp puede contestar a ese operador.
      */
     bool can_answer_capability(const std::string& name);
+
+    /**
+     * @brief Directorio efectivo de la memoria entre ejecuciones.
+     *
+     * Resuelve las dos formas de no decir nada -- desactivada del todo, o
+     * activada sin decir donde -- en un solo sitio, para que los dos que la
+     * usan no puedan interpretarlas distinto.
+     *
+     * @return La ruta, o vacia si no hay memoria en disco.
+     */
+    std::string effective_cache_dir() const;
 
     /**
      * @brief Dice si un nombre esta definido a efectos de `#ifdef` y `defined`.

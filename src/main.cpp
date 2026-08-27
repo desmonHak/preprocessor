@@ -43,6 +43,9 @@ static void print_help(const char* prog) {
         << "  --capabilities-from <c>\n"
         << "                    Con que resolver __has_builtin y companeros,\n"
         << "                    p.ej. --capabilities-from \"gcc -E -P -x c\"\n"
+        << "  --cache-dir <d>   Donde recordar lo que contesta el compilador\n"
+        << "                    (por omision, la cache del usuario)\n"
+        << "  --no-cache        No recuerda nada entre ejecuciones\n"
         << "  --line-markers    Emite marcadores #line tras cada #include\n"
         << "  --no-expand       Desactiva la expansion de macros en texto\n"
         << "  --stdin           Lee el fuente de la entrada estandar\n"
@@ -108,6 +111,8 @@ int main(int argc, char* argv[]) {
     std::vector<std::string> defines;
     std::vector<vpp::PredefSource> predef_sources;
     std::string capabilities_cmd;
+    std::string cache_dir;
+    bool        use_cache = true;
     std::vector<std::string> include_paths;
     std::vector<std::string> import_paths;
     bool line_markers = false;
@@ -181,6 +186,20 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
+        // Donde recordar entre ejecuciones lo que contesta el compilador.  Por
+        // omision es la cache del usuario, porque lo que se guarda son hechos
+        // sobre un COMPILADOR y valen igual en todos sus proyectos; se cambia
+        // aqui cuando la compilacion tiene que ser reproducible o aislada.
+        if (std::strcmp(argv[i], "--cache-dir") == 0 && i + 1 < argc) {
+            cache_dir = argv[++i];
+            continue;
+        }
+
+        if (std::strcmp(argv[i], "--no-cache") == 0) {
+            use_cache = false;
+            continue;
+        }
+
         // Precarga desde la salida de un comando.  Se apunta al BINARIO exacto
         // en lugar de a un nombre de compilador conocido, de modo que conviven
         // varias versiones y varios toolchains en la misma maquina:
@@ -228,6 +247,8 @@ int main(int argc, char* argv[]) {
     opts.predefines        = defines;
     opts.predef_sources    = predef_sources;
     opts.capabilities_command = capabilities_cmd;
+    opts.cache_dir            = cache_dir;
+    opts.use_cache            = use_cache;
 
     // --- leer el fuente ---
     std::string source;
