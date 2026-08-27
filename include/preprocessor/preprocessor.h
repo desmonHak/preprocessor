@@ -9,9 +9,11 @@
 #include "pp_evaluator.h"
 #include "pp_ast.h"
 #include "pp_lexer.h"
+#include "pp_capabilities.h"
 #include <string>
 #include <vector>
 #include <unordered_set>
+#include <unordered_map>
 #include <functional>
 
 namespace vpp {
@@ -74,6 +76,24 @@ struct PPOptions {
      * sea C.
      */
     std::vector<PredefSource> predef_sources;
+
+    /**
+     * @brief Con que preguntar por las capacidades del compilador de destino.
+     *
+     * Los operadores `__has_builtin`, `__has_attribute` y companeros preguntan
+     * por lo que sabe hacer un COMPILADOR, no por una macro, asi que la unica
+     * respuesta honesta es preguntarselo a el.  Aqui va la orden con la que
+     * invocarlo; vpp le anade la ruta de un fichero de consulta.
+     *
+     *     "gcc -E -P -x c"        "clang -E -P -x c++"      "cl /EP"
+     *
+     * Se apunta al binario EXACTO por el mismo motivo que en predef_sources:
+     * en una maquina conviven varios compiladores -- el de MinGW, el de MSVC,
+     * el de WSL -- y cada uno responde distinto a la misma pregunta.
+     *
+     * Vacio significa que no hay a quien preguntar y esos operadores valen 0.
+     */
+    std::string capabilities_command;
     bool                 emit_line_markers; ///< Emite marcadores #line tras cada #include
 
     /** @brief Constructor con valores por defecto. */
@@ -227,8 +247,29 @@ private:
      */
     SourceLocation mapped_position(const SourceLocation& real) const;
 
+    /**
+     * @brief Quien contesta por el compilador de destino.
+     *
+     * Es un componente aparte, con su propio estado y su propia memoria; el
+     * preprocesador solo le pasa la pregunta.
+     */
+    CapabilityOracle m_capabilities;
+
     // Contadores para macros dinamicas
     uint32_t m_counter; ///< Valor actual de __COUNTER__
+
+    /**
+     * @brief Responde a un operador de prueba de caracteristicas.
+     *
+     * Reparte segun quien sepa la respuesta: `__has_include` lo contesta vpp
+     * con sus propias rutas de busqueda, y el resto va al CapabilityOracle,
+     * que es quien habla con el compilador y recuerda lo que dice.
+     *
+     * @param op  Operador, p.ej. "__has_builtin".
+     * @param arg Texto entre parentesis.
+     * @return 1 o 0; 0 tambien cuando no hay compilador al que preguntar.
+     */
+    int64_t resolve_capability(const std::string& op, const std::string& arg);
 
     /**
      * @brief Precarga los conjuntos de macros de `predef_sources`.

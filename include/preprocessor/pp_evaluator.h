@@ -13,6 +13,21 @@
 namespace vpp {
 
 /**
+ * @brief Resuelve un operador de prueba de caracteristicas.
+ *
+ * Son los `__has_builtin`, `__has_attribute`, `__has_include` y companeros que
+ * aparecen en las condiciones de las cabeceras modernas.  No son macros: son
+ * operadores que preguntan por lo que sabe hacer el COMPILADOR DE DESTINO, asi
+ * que vpp no puede contestarlos por su cuenta y delega en quien si puede.
+ *
+ * @param op  Nombre del operador, con sus dos guiones bajos.
+ * @param arg Texto entre parentesis, tal cual.
+ * @return Valor entero del operador; 0 si no se sabe.
+ */
+using CapabilityResolver =
+    std::function<int64_t(const std::string& op, const std::string& arg)>;
+
+/**
  * @brief Valor de una expresion del preprocesador, con su caracter de signo.
  *
  * El estandar de C evalua las condiciones de `#if` en el entero mas ancho
@@ -53,7 +68,15 @@ public:
      * @param macros Tabla de macros para resolver identificadores y defined().
      * @param diag   Motor de diagnosticos para errores de expresion.
      */
-    PPEvaluator(MacroTable& macros, DiagnosticEngine& diag);
+    /**
+     * @brief Constructor.
+     * @param macros Tabla de macros.
+     * @param diag   Motor de diagnosticos.
+     * @param caps   Resolutor de operadores de prueba de caracteristicas.  Nulo
+     *               significa que no hay a quien preguntar y valen 0.
+     */
+    PPEvaluator(MacroTable& macros, DiagnosticEngine& diag,
+                CapabilityResolver caps = nullptr);
 
     /**
      * @brief Evalua una secuencia de tokens como expresion entera constante.
@@ -81,6 +104,7 @@ private:
 
     MacroTable&       m_macros; ///< Referencia a la tabla de macros
     DiagnosticEngine& m_diag;   ///< Motor de diagnosticos
+    CapabilityResolver m_caps;  ///< Resolutor de capacidades; puede ser nulo
 
     // Estado del parser de expresion
     std::vector<PPToken> m_toks; ///< Tokens de la expresion a evaluar

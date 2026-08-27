@@ -71,6 +71,41 @@ void Preprocessor::add_predef_source(PredefKind kind,
     m_opts.predef_sources.push_back(PredefSource{kind, value});
 }
 
+int64_t Preprocessor::resolve_capability(const std::string& op,
+                                         const std::string& arg) {
+    // `__has_include` lo contesta vpp POR SI MISMO.  Pregunta por si una ruta
+    // se resuelve, y eso se sabe con las MISMAS rutas de busqueda que se usan
+    // para incluir; delegarlo en el compilador daria una respuesta sobre otro
+    // juego de rutas, que no es la pregunta que se hizo.
+    if (op == "__has_include" || op == "__has_include_next") {
+        std::string ruta = arg;
+        bool sistema = false;
+        if (ruta.size() >= 2 && ruta.front() == '<' && ruta.back() == '>') {
+            ruta = ruta.substr(1, ruta.size() - 2);
+            sistema = true;
+        } else if (ruta.size() >= 2 && ruta.front() == '"' &&
+                                       ruta.back()  == '"') {
+            ruta = ruta.substr(1, ruta.size() - 2);
+        }
+        if (ruta.empty()) return 0;
+
+        // Se busca EN SILENCIO: que el fichero no exista es la respuesta que se
+        // esta pidiendo, no un error que reportar.
+        Preprocessor sonda(DiagCallback([](const Diagnostic&) {}));
+        sonda.m_opts = m_opts;
+        IncludeNode consulta(
+            SourceLocation(m_include_stack.empty() ? std::string()
+                                                   : m_include_stack.back(),
+                           0, 0),
+            ruta, sistema, false);
+        return sonda.resolve_include(consulta).empty() ? 0 : 1;
+    }
+
+    // El resto pregunta por el compilador, y de eso se encarga el oraculo.
+    m_capabilities.set_command(m_opts.capabilities_command);
+    return m_capabilities.query(op, arg);
+}
+
 void Preprocessor::load_predefines() {
     for (const auto& src : m_opts.predef_sources) {
         std::string text;
@@ -594,7 +629,10 @@ bool Preprocessor::eval_condition(const std::vector<PPToken>& tokens,
     // una condicion puede usar __LINE__, asi que tambien necesita la posicion
     const SourceLocation pos = mapped_position(loc);
     m_macros.set_source_position(pos.file, pos.line);
-    PPEvaluator eval(m_macros, m_diag);
+    PPEvaluator eval(m_macros, m_diag,
+        [this](const std::string& op, const std::string& arg) {
+            return resolve_capability(op, arg);
+        });
     return eval.evaluate(tokens, loc) != 0;
 }
 
@@ -735,7 +773,7 @@ void Preprocessor::eval_set(const SetDirNode& node) {
         return;
     }
 
-    // evaluar RHS — primero expandir macros en la expresion
+    // evaluar RHS: primero expandir macros en la expresion
     auto rhs_expanded = m_macros.expand(node.expr, l);
 
     // detectar si es una asignacion de cadena: unico token STRING

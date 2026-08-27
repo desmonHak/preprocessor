@@ -11,8 +11,9 @@ namespace vpp {
 
 static const PPToken EOF_TOKEN(PPTokenType::PP_EOF, "", {});
 
-PPEvaluator::PPEvaluator(MacroTable& macros, DiagnosticEngine& diag)
-    : m_macros(macros), m_diag(diag), m_pos(0)
+PPEvaluator::PPEvaluator(MacroTable& macros, DiagnosticEngine& diag,
+                         CapabilityResolver caps)
+    : m_macros(macros), m_diag(diag), m_caps(std::move(caps)), m_pos(0)
 {}
 
 std::vector<PPToken> PPEvaluator::resolve_defined(
@@ -460,6 +461,35 @@ PPValue PPEvaluator::parse_primary() {
     // identificadores: defined(), true, false, o macros residuales
     if (check(PPTokenType::IDENT)) {
         PPToken t = consume();
+
+        // Operadores de prueba de caracteristicas: __has_builtin, __has_include
+        // y companeros.
+        //
+        // Se atienden AQUI y no como macros porque no lo son: preguntan por lo
+        // que sabe hacer el compilador de destino.  Si el usuario define una
+        // macro con ese nombre, no se llega hasta aqui -- la expansion la habra
+        // sustituido antes -- de modo que definirla es la forma de imponer una
+        // respuesta propia sin tocar nada mas.
+        if (t.value.rfind("__has_", 0) == 0) {
+            // El argumento se toma EN CRUDO: puede ser <vector>, "x.h" o un
+            // identificador, y ninguno de los tres se parsea como expresion.
+            std::string arg;
+            if (check(PPTokenType::LPAREN)) {
+                consume();
+                int prof = 1;
+                while (!check(PPTokenType::PP_EOF) && prof > 0) {
+                    if (check(PPTokenType::LPAREN)) ++prof;
+                    if (check(PPTokenType::RPAREN)) {
+                        --prof;
+                        if (prof == 0) { consume(); break; }
+                    }
+                    if (!check(PPTokenType::WHITESPACE)) arg += cur().value;
+                    consume();
+                }
+            }
+            const int64_t v = m_caps ? m_caps(t.value, arg) : 0;
+            return PPValue{v, false};
+        }
 
         // operador defined(MACRO) o defined MACRO
         if (t.value == "defined") {

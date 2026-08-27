@@ -100,6 +100,7 @@ set(VPP_SOURCES
     src/pp_parser.cpp
     src/pp_macro.cpp
     src/pp_evaluator.cpp
+    src/pp_capabilities.cpp
     src/preprocessor.cpp
 )
 
