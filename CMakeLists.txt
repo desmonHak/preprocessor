@@ -23,6 +23,58 @@ else()
     set(VPP_IS_TOP_LEVEL OFF)
 endif()
 
+
+# ---------------------------------------------------------------------------
+#  Configuracion Profile: Release CON simbolos, para perfilar de verdad
+# ---------------------------------------------------------------------------
+#
+# Por que no vale ninguna de las que ya hay.  Un perfil sobre Debug dice QUE
+# codigo existe, no CUANTO pesa: sin meter en linea, cualquier funcion pequena
+# llamada a menudo copa la lista y se acaba optimizando lo que no toca.  Y
+# RelWithDebInfo es otro nivel de optimizacion, es decir otro programa, y por
+# tanto otras proporciones.
+#
+# Profile PARTE de los flags de Release y solo anade lo que el perfilador
+# necesita para atribuir tiempo:
+#
+#   -g                       simbolos; sin ellos hay que traducir direcciones a mano
+#   -fno-omit-frame-pointer  pilas de llamada fiables (Release las omite)
+#
+# El nivel de optimizacion NO se toca.  Si cambiara, se estaria midiendo un
+# programa distinto del que se ejecuta, que es justo el error que esto evita.
+#
+#   cmake -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Profile -B cmake-build-profile
+if(NOT MSVC)
+    set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE} -O2 -g -fno-omit-frame-pointer"
+        CACHE STRING "Flags C++ para perfilar (Release + simbolos)" FORCE)
+    set(CMAKE_C_FLAGS_PROFILE "${CMAKE_C_FLAGS_RELEASE} -O2 -g -fno-omit-frame-pointer"
+        CACHE STRING "Flags C para perfilar (Release + simbolos)" FORCE)
+else()
+    set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Zi"
+        CACHE STRING "Flags C++ para perfilar (Release + simbolos)" FORCE)
+    set(CMAKE_C_FLAGS_PROFILE "${CMAKE_C_FLAGS_RELEASE} /O2 /Zi"
+        CACHE STRING "Flags C para perfilar (Release + simbolos)" FORCE)
+endif()
+
+# Se enlaza como Release SALVO el estripado: `--strip-all` borra justo lo que
+# hace falta para atribuir cada muestra a una funcion.  En MSVC hay que pedir
+# los .pdb explicitamente, que es lo que lee el perfilador.
+if(NOT MSVC)
+    set(CMAKE_EXE_LINKER_FLAGS_PROFILE "${CMAKE_EXE_LINKER_FLAGS_RELEASE}"
+        CACHE STRING "Flags de enlazado para perfilar" FORCE)
+    set(CMAKE_SHARED_LINKER_FLAGS_PROFILE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE}"
+        CACHE STRING "Flags de enlazado dinamico para perfilar" FORCE)
+else()
+    set(CMAKE_EXE_LINKER_FLAGS_PROFILE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /DEBUG"
+        CACHE STRING "Flags de enlazado para perfilar" FORCE)
+    set(CMAKE_SHARED_LINKER_FLAGS_PROFILE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /DEBUG"
+        CACHE STRING "Flags de enlazado dinamico para perfilar" FORCE)
+endif()
+
+if(CMAKE_CONFIGURATION_TYPES)
+    list(APPEND CMAKE_CONFIGURATION_TYPES Profile)
+    list(REMOVE_DUPLICATES CMAKE_CONFIGURATION_TYPES)
+endif()
 # --- opciones de compilacion -----------------------------------------------
 
 option(VPP_BUILD_TESTS  "Compilar los tests del preprocesador" ON)

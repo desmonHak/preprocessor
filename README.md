@@ -1619,6 +1619,34 @@ omiten en vez de dar un rojo que no dice nada del codigo.
 | `vpp_test_compiler_id` | Identificacion del compilador: extraer el ejecutable, buscarlo por el PATH, y que la huella cambie al cambiar el binario o los flags |
 | `vpp_test_facts_cache` | Memoria entre ejecuciones: persistencia, separacion por compilador, fusion de escrituras y lo que se niega a guardar |
 
+
+---
+
+## Perfilar
+
+Hay una configuracion `Profile`: **Release CON simbolos**, que es la unica que
+mide el programa que de verdad se ejecuta.
+
+```bash
+cmake -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Profile -B cmake-build-profile
+cmake --build cmake-build-profile -j8
+
+vtune -collect hotspots -r vtune-r001 -- ./cmake-build-profile/vpp.exe <args>
+vtune -report summary  -r vtune-r001
+vtune -report hotspots -r vtune-r001 -group-by source-file
+```
+
+No vale perfilar sobre Debug ni sobre RelWithDebInfo.  Debug dice QUE codigo
+existe, no cuanto pesa: sin meter en linea, cualquier funcion pequena llamada a
+menudo copa la lista y se acaba optimizando lo que no toca.  RelWithDebInfo es
+otro nivel de optimizacion, es decir otro programa, y por tanto otras
+proporciones.  `Profile` parte de los flags de Release y solo anade `-g` y
+`-fno-omit-frame-pointer`; el nivel de optimizacion no se toca, y tampoco se
+estripa al enlazar, porque `--strip-all` borra justo lo que hace falta para
+atribuir cada muestra a una funcion.
+
+Conviene perfilar con la memoria caliente (ver arriba): en frio, lo que se mide
+son los procesos del compilador, no el trabajo de vpp.
 ---
 
 ## Estructura del proyecto
