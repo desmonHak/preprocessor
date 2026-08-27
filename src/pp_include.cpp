@@ -8,10 +8,26 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <system_error>
 
 namespace vpp {
 
 namespace {
+
+/**
+ * @brief Comprueba que un fichero existe, sin leerlo.
+ *
+ * Separar mirar de leer es lo que permite descartar una inclusion sin pagar el
+ * fichero entero: una cabecera cuya guarda ya esta definida no puede aportar
+ * nada, y para saberlo basta con saber CUAL es.
+ *
+ * @param p Ruta a comprobar.
+ * @return true si existe y es un fichero.
+ */
+bool existe(const std::filesystem::path& p) {
+    std::error_code ec;
+    return std::filesystem::is_regular_file(p, ec);
+}
 
 /**
  * @brief Lee un fichero entero, o nada si no se puede abrir.
@@ -37,10 +53,10 @@ IncludeSearch::IncludeSearch(const std::vector<std::string>& include_paths,
     : m_include_paths(include_paths)
     , m_import_paths(import_paths) {}
 
-ResolvedInclude IncludeSearch::resolve(const std::string& path,
-                                         bool               is_system,
-                                         const std::string& from_file,
-                                         int                start) const {
+ResolvedInclude IncludeSearch::locate(const std::string& path,
+                                       bool               is_system,
+                                       const std::string& from_file,
+                                       int                start) const {
     ResolvedInclude r;
 
     // Forma "..." y busqueda desde el principio: primero al lado del fichero
@@ -50,7 +66,7 @@ ResolvedInclude IncludeSearch::resolve(const std::string& path,
         const std::filesystem::path base =
             std::filesystem::path(from_file).parent_path();
         const std::filesystem::path cand = base / path;
-        if (leer(cand, r.content)) {
+        if (existe(cand)) {
             r.found        = true;
             r.path         = cand.string();
             r.search_index = -1;   // no salio de la lista de rutas
@@ -64,7 +80,7 @@ ResolvedInclude IncludeSearch::resolve(const std::string& path,
         const std::filesystem::path cand =
             std::filesystem::path(m_include_paths[static_cast<std::size_t>(i)])
             / path;
-        if (leer(cand, r.content)) {
+        if (existe(cand)) {
             r.found        = true;
             r.path         = cand.string();
             r.search_index = i;
@@ -72,6 +88,18 @@ ResolvedInclude IncludeSearch::resolve(const std::string& path,
         }
     }
 
+    return r;
+}
+
+ResolvedInclude IncludeSearch::resolve(const std::string& path,
+                                        bool               is_system,
+                                        const std::string& from_file,
+                                        int                start) const {
+    ResolvedInclude r = locate(path, is_system, from_file, start);
+    if (r.found && !leer(r.path, r.content)) {
+        // Estaba al mirar y ya no esta al abrir: se trata como no encontrado.
+        r = ResolvedInclude{};
+    }
     return r;
 }
 

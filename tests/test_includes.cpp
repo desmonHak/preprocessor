@@ -7,6 +7,8 @@
 #include <iostream>
 #include <string>
 #include <unordered_map>
+#include <filesystem>
+#include <fstream>
 
 using namespace vpp;
 
@@ -210,6 +212,49 @@ static void test_guarda_que_no_se_define() {
          i = out.find("CUERPO", i + 1)) ++veces;
     CHECK(veces == 2, "una guarda que no define su nombre no se toma por tal");
 }
+
+/**
+ * @brief Dos ficheros distintos que se escriben igual no comparten identidad.
+ *
+ * Es el fallo que destapo el CI de macOS.  `#include "vecino.h"` desde dos
+ * directorios distintos nombra DOS ficheros distintos; si lo recordado se
+ * indexa por la ruta escrita, la guarda de uno se aplica al otro y el segundo
+ * se salta sin haberse leido nunca.  Alli desaparecieron las definiciones de
+ * <runetype.h> y el resultado no compilaba.
+ */
+static void test_identidad_por_ruta_resuelta() {
+    namespace fs = std::filesystem;
+    const fs::path raiz = fs::temp_directory_path() / "vpp_test_ident";
+    fs::remove_all(raiz);
+    fs::create_directories(raiz / "a");
+    fs::create_directories(raiz / "b");
+
+    auto escribir = [](const fs::path& p, const std::string& s) {
+        std::ofstream ofs(p, std::ios::binary);
+        ofs << s;
+    };
+
+    // Mismo nombre, distinto contenido y distinta guarda.
+    escribir(raiz / "a" / "vecino.h",
+             "#ifndef G_A\n#define G_A\nMARCA_A\n#endif\n");
+    escribir(raiz / "b" / "vecino.h",
+             "#ifndef G_B\n#define G_B\nMARCA_B\n#endif\n");
+    // Cada uno lo incluye con la MISMA ruta escrita.
+    escribir(raiz / "a" / "usa.h", "#include \"vecino.h\"\n");
+    escribir(raiz / "b" / "usa.h", "#include \"vecino.h\"\n");
+
+    Preprocessor pp([](const Diagnostic&){});
+pp.options().include_paths.push_back(raiz.string());
+
+    const std::string out = pp.process(
+        "#include \"a/usa.h\"\n#include \"b/usa.h\"\n", "t.c");
+
+    CHECK(contains(out, "MARCA_A"), "se procesa el vecino del primer directorio");
+    CHECK(contains(out, "MARCA_B"), "y tambien el del segundo, que es otro fichero");
+
+    std::error_code ec;
+    fs::remove_all(raiz, ec);
+}
 /* --- main ----------------------------------------------------------------- */
 
 int main() {
@@ -225,6 +270,7 @@ int main() {
     test_contenido_fuera_de_la_guarda();
     test_undef_de_la_guarda();
     test_guarda_que_no_se_define();
+    test_identidad_por_ruta_resuelta();
 
     std::cout << "\nResultados: " << tests_passed << " pasados, "
               << tests_failed  << " fallados\n";

@@ -73,6 +73,29 @@ public:
                             int                start = 0) const;
 
     /**
+     * @brief Localiza el fichero de un `#include` SIN leerlo.
+     *
+     * Misma busqueda que resolve(), pero devolviendo solo donde esta.  Existe
+     * porque saber CUAL es el fichero basta para decidir que no hace falta: una
+     * cabecera cuya guarda de inclusion ya esta definida no puede aportar nada,
+     * y asi se descarta sin pagar la lectura.
+     *
+     * Ademas es lo unico que da la ruta RESUELTA a tiempo de usarla como
+     * identidad.  La ruta escrita no sirve: `#include "_types.h"` desde dos
+     * directorios distintos nombra ficheros distintos.
+     *
+     * @param path      Ruta tal y como se escribio en la directiva.
+     * @param is_system true para la forma `<...>`, false para `"..."`.
+     * @param from_file Ruta RESUELTA del fichero que incluye.
+     * @param start     Primer indice de la lista de rutas por el que empezar.
+     * @return El resultado con `content` VACIO; `found` a false si no aparecio.
+     */
+    ResolvedInclude locate(const std::string& path,
+                           bool               is_system,
+                           const std::string& from_file,
+                           int                start = 0) const;
+
+    /**
      * @brief Busca el modulo de un `#import`.
      *
      * Tiene reglas propias: mira solo en las rutas de importacion y prueba las

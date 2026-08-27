@@ -540,6 +540,7 @@ void Preprocessor::eval_include(const IncludeNode& node, std::string& output) {
     // sin resolver porque no ve la tabla; se expanden aqui y el resultado tiene
     // que formar "..." o <...>, igual que si se hubiera escrito literalmente.
     std::string ruta      = node.path;
+    std::string ruta_resuelta;
     bool        es_sistema = node.is_system;
 
     if (!node.path_tokens.empty()) {
@@ -568,25 +569,41 @@ void Preprocessor::eval_include(const IncludeNode& node, std::string& output) {
         }
     }
 
+    /* Se AVERIGUA cual es el fichero antes de decidir nada, pero sin leerlo.
+     *
+     * La identidad de una inclusion es su ruta RESUELTA, no la escrita: un
+     * `#include "_types.h"` desde dos directorios distintos nombra dos ficheros
+     * distintos.  Usar la escrita hacia que lo recordado de uno se aplicara al
+     * otro y se saltara el que no debia. */
+    const ResolvedInclude situado = locate_include(node, ruta, es_sistema);
+    if (!situado.found) {
+        // Que no aparezca lo diagnostica resolve_include mas abajo, con su
+        // mensaje y su ubicacion; aqui solo se sabe que no hay nada que saltar.
+        ruta_resuelta.clear();
+    } else {
+        ruta_resuelta = situado.path;
+    }
+    const std::string& clave = ruta_resuelta.empty() ? ruta : ruta_resuelta;
+
     /* Optimizacion de inclusion multiple: si de una visita anterior se sabe que
      * este fichero es una guarda envolviendolo todo, y esa guarda sigue
      * definida, incluirlo no puede producir nada.  Se sale sin abrirlo siquiera.
      * Se comprueba que la macro SIGA definida porque un `#undef` por medio
      * vuelve a hacer significativo el contenido. */
     {
-        const auto it = m_include_guards.find(ruta);
+        const auto it = m_include_guards.find(clave);
         if (it != m_include_guards.end() && m_macros.is_defined(it->second)) {
             return;
         }
     }
 
     // verificar que el archivo no haya sido incluido con #pragma once
-    if (m_include_guard_once.count(ruta)) return;
+    if (m_include_guard_once.count(clave)) return;
 
     // #import tiene semantica auto-once: registrar el modulo antes de procesarlo
     // para que importaciones circulares o duplicadas sean silenciosamente ignoradas
     if (node.is_import) {
-        m_include_guard_once.insert(ruta);
+        m_include_guard_once.insert(clave);
     }
 
     // resolver el contenido del archivo
@@ -643,7 +660,7 @@ void Preprocessor::eval_include(const IncludeNode& node, std::string& output) {
             m_included_files.push_back(ruta);
         /* Se anota su guarda ANTES de evaluarlo: al evaluar se define, y desde
          * la siguiente inclusion el fichero ya se puede saltar entero. */
-        record_include_guard(ruta, *block);
+        record_include_guard(clave, *block);
         eval_block(*block, output);
         m_include_stack.pop_back();
     }
@@ -806,6 +823,27 @@ bool Preprocessor::eval_condition(const std::vector<PPToken>& tokens,
     return eval.evaluate(tokens, loc) != 0;
 }
 
+
+ResolvedInclude Preprocessor::locate_include(const IncludeNode& node,
+                                             const std::string& path,
+                                             bool is_system) {
+    ResolvedInclude r;
+
+    // Con un resolvedor del usuario no hay nada que localizar: lo que sirva no
+    // tiene por que existir en el disco.  Se deja sin situar y la identidad
+    // vuelve a ser la ruta escrita, que es lo unico que hay.
+    if (m_resolver || node.is_import) return r;
+
+    m_search = IncludeSearch(m_opts.include_paths, m_opts.import_paths);
+
+    const std::string desde = m_include_stack.empty() ? node.loc.file()
+                                                      : m_include_stack.back().path;
+    int inicio = 0;
+    if (node.is_next && !m_include_stack.empty()) {
+        inicio = m_include_stack.back().search_index + 1;
+    }
+    return m_search.locate(path, is_system, desde, inicio);
+}
 ResolvedInclude Preprocessor::resolve_include(const IncludeNode& node) {
     ResolvedInclude r;
 

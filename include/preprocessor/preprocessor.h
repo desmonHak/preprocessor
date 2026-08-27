@@ -526,6 +526,23 @@ private:
      */
     ResolvedInclude resolve_include(const IncludeNode& node);
 
+    /**
+     * @brief Averigua CUAL es el fichero de una inclusion, sin leerlo.
+     *
+     * Se necesita antes de decidir si hace falta: la identidad de una inclusion
+     * es su ruta resuelta, no la escrita, y con la escrita lo recordado de un
+     * fichero se aplicaba a otro distinto que se llamaba igual.
+     *
+     * @param node      Nodo de la directiva.
+     * @param path      Ruta ya expandida si venia de macros.
+     * @param is_system true para la forma `<...>`.
+     * @return Donde esta, con `content` vacio; `found` a false si no aparece o
+     *         si la inclusion no pasa por el sistema de ficheros.
+     */
+    ResolvedInclude locate_include(const IncludeNode& node,
+                                   const std::string& path,
+                                   bool is_system);
+
 };
 
 } // namespace vpp
