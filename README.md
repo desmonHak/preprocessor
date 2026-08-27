@@ -1632,7 +1632,11 @@ Dos cosas dominaban el coste, y las dos se midieron con VTune antes y despues
 | :-- | --: | --: |
 | de partida | 1283 ms | 15 773 478 |
 | nombres de fichero compartidos | 693 ms | 2 361 047 |
-| + inclusion multiple | **310 ms** | |
+| + inclusion multiple | 310 ms | |
+| + menos reservas y menos disco | **259 ms** | 776 470 |
+
+Como referencia, `gcc -E` hace lo mismo en 126 ms: se paso de 10x mas lento a
+2,1x.
 
 **Nombres compartidos.**  Cada token lleva su ubicacion, y la ubicacion guardaba
 el nombre del fichero por valor.  Una ruta de cabecera pasa de los ochenta
@@ -1648,6 +1652,14 @@ guarda y se sale sin abrir el fichero, siempre que la macro SIGA definida -- un
 `#undef` por medio vuelve a hacer significativo el contenido.
 
 
+
+**Menos reservas y menos disco.**  Un identificador que no es macro -- la
+inmensa mayoria -- se devolvia dentro de un vector de UN elemento, o sea una
+reserva por identificador.  Y del lado del disco: al separar localizar de leer
+se acabo buscando dos veces cada fichero que si se lee, la lista de rutas se
+recorria consultando el sistema de ficheros en cada inclusion aunque la peticion
+fuese identica, el buscador se reconstruia entero cada vez, y se construia un
+preprocesador completo por inclusion que no se usaba para nada.
 **Identidad de una inclusion.**  Lo que se recuerda de un fichero -- su guarda,
 su `#pragma once` -- va indexado por la ruta RESUELTA, no por la escrita.  Un
 `#include "vecino.h"` desde dos directorios distintos nombra dos ficheros

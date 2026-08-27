@@ -1749,6 +1749,25 @@ static std::vector<PPToken> expand_impl(
                 continue;
             }
 
+            // Camino rapido: un identificador que NO va a expandirse.
+            //
+            // Es con mucho el caso normal -- la inmensa mayoria de los nombres
+            // de un fuente no son macros -- y pasa tal cual a la salida.  Sin
+            // esto se atendia igual que los demas, y atenderlo significa
+            // devolverlo dentro de un vector de UN elemento: una reserva de
+            // memoria por identificador.  Medido, eran el 44% de las que
+            // quedaban.
+            //
+            // Cubre tambien el nombre que esta tapado por el guard, que
+            // tampoco se expande.  Lo que no cubre es una macro funcion sin
+            // parentesis detras, porque para saberlo hay que mirar mas alla;
+            // ese caso sigue por el camino largo, y es raro.
+            if (!table.get_builtin_fn(name) &&
+                (guard.count(name) || !table.get(name))) {
+                result.push_back(tokens[pos++]);
+                continue;
+            }
+
             const std::string nombre_previo = tokens[pos].value;
             auto exp = expand_one_impl(tokens, pos, table, guard);
 

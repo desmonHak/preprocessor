@@ -5,10 +5,26 @@
 #pragma once
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace vpp {
 
+
+/**
+ * @brief Lee un fichero entero.
+ *
+ * Vive aqui, junto a la busqueda, porque es su otra mitad: locate() dice cual
+ * es y esto lo trae.  Separadas, quien ya sabe cual es puede leerlo sin volver
+ * a buscarlo.
+ *
+ * @param path Ruta del fichero.
+ * @param out  Recibe el contenido.
+ * @return true si se pudo leer.  Un fichero VACIO cuenta como leido: una
+ *         cabecera vacia es legitima, y confundirla con un fallo hace que la
+ *         busqueda siga y acabe abriendo otra distinta.
+ */
+bool read_file(const std::string& path, std::string& out);
 /**
  * @brief Lo que se sabe de una inclusion despues de buscarla.
  *
@@ -111,6 +127,35 @@ public:
     std::size_t include_path_count() const noexcept {
         return m_include_paths.size();
     }
+
+
+private:
+    /**
+     * @brief Lo ya localizado en esta ejecucion, por peticion.
+     *
+     * Localizar recorre la lista de rutas preguntandole al sistema de ficheros
+     * por cada candidato, y la MISMA peticion se repite constantemente: una
+     * cabecera muy incluida se busca una vez por inclusion aunque despues se
+     * descarte por su guarda.  Medido con VTune, esas consultas llegaron a ser
+     * el 35% del tiempo.
+     *
+     * Se da por hecho que el arbol de ficheros no cambia mientras dura el
+     * preproceso, que es lo que hacen todos los preprocesadores.
+     */
+    mutable std::unordered_map<std::string, ResolvedInclude> m_located;
+
+    /**
+     * @brief Clave de una peticion de busqueda.
+     * @param path      Ruta escrita.
+     * @param is_system Forma `<...>`.
+     * @param from_file Fichero que incluye.
+     * @param start     Indice por el que empezar.
+     * @return Clave que distingue peticiones distintas.
+     */
+    static std::string request_key(const std::string& path,
+                                   bool               is_system,
+                                   const std::string& from_file,
+                                   int                start);
 
 private:
     std::vector<std::string> m_include_paths;  ///< Rutas de `#include <...>`
