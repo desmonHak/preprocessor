@@ -30,3 +30,11 @@ G(1)(2)
 /* Una macro no puede reentrar en si misma por esta via. */
 #define R(x) R
 R(1)(2)
+
+/* Dos llamadas iguales seguidas: la segunda tiene que expandir igual que la
+   primera.  Ocultar la macro durante la relectura la dejaba tapada tambien
+   para todo lo que venia detras, y la segunda se quedaba sin expandir. */
+F(p,q)
+F(p,q)
+G(3)(4)
+G(5)(6)

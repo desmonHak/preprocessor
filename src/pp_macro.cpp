@@ -1771,10 +1771,21 @@ static std::vector<PPToken> expand_impl(
             // lo usa para `__API_AVAILABLE`.
             //
             // Cada vuelta consume al menos la llamada que acaba de leer, asi
-            // que esto termina siempre; y el nombre reaparecido se comprueba
-            // contra el guard, de modo que una macro no puede reentrar en si
-            // misma por esta via.
+            // que esto termina siempre.
+            //
+            // Una macro no reentra en si misma por esta via: si lo que reaparece
+            // es SU PROPIO nombre, se deja como esta.  Es la regla de la pintura
+            // azul del estandar -- los tokens que salen de expandir `R` llevan
+            // `R` tapado consigo -- y hace que `#define R(x) R` con `R(1)(2)`
+            // de `R(2)`.  El guard normal ya se levanto al volver de la
+            // expansion, asi que la reentrada solo era posible por aqui.
+            //
+            // Se comprueba sobre el nombre y no tapandolo durante la relectura:
+            // taparlo dejaria oculta la macro para TODO lo que viene detras, y
+            // entonces la segunda de dos llamadas iguales en lineas contiguas
+            // se quedaba sin expandir.
             if (!exp.empty() && exp.back().type == PPTokenType::IDENT &&
+                exp.back().value != nombre_previo &&
                 !guard.count(exp.back().value)) {
                 const MacroDef* siguiente = table.get(exp.back().value);
                 size_t k = pos;
@@ -1794,17 +1805,7 @@ static std::vector<PPToken> expand_impl(
                     exp.pop_back();
 
                     result.insert(result.end(), exp.begin(), exp.end());
-                    // La macro que se acaba de expandir sigue OCULTA mientras
-                    // se relee.  Es la regla de la pintura azul del estandar:
-                    // los tokens que salen de expandir `R` llevan `R` tapado
-                    // consigo, asi que `#define R(x) R` con `R(1)(2)` da
-                    // `R(2)` y no vuelve a entrar en R.  El guard normal ya se
-                    // habia levantado al volver de la expansion, de modo que
-                    // sin esto la reentrada era posible por esta via.
-                    const bool ya_oculta = guard.count(nombre_previo) != 0;
-                    guard[nombre_previo] = true;
                     auto releido = expand_impl(resto, table, guard);
-                    if (!ya_oculta) guard.erase(nombre_previo);
                     result.insert(result.end(), releido.begin(), releido.end());
                     pos = tokens.size();
                     continue;
