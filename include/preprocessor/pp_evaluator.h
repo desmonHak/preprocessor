@@ -163,6 +163,17 @@ private:
     bool check(PPTokenType t) const;
 
     /**
+     * @brief Indica si tras el token actual, saltando espacios, viene un '('.
+     *
+     * Sirve para distinguir un predicado del compilador -- que siempre se
+     * invoca con parentesis -- de un identificador suelto, que en `#if` vale 0
+     * por norma.  Mira sin consumir.
+     *
+     * @return true si el siguiente token significativo es '('.
+     */
+    bool peek_is_lparen() const;
+
+    /**
      * @brief Consume el token actual si es del tipo indicado.
      * @param t Tipo esperado.
      * @return true si se consumio, false si no coincidio.

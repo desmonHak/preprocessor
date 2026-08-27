@@ -290,10 +290,9 @@ private:
     int64_t resolve_capability(const std::string& op, const std::string& arg);
 
     /**
-     * @brief Dice si un operador de prueba de caracteristicas cuenta como
-     *        definido para `#ifdef`, `#ifndef` y `defined()`.
+     * @brief Dice si vpp puede contestar a un operador del compilador.
      *
-     * No es un detalle: las bibliotecas estandar se protegen con
+     * No es un detalle.  Las bibliotecas estandar se protegen con
      *
      *     #ifndef __has_builtin
      *     #  define __has_builtin(x) 0
@@ -304,16 +303,17 @@ private:
      * compilador no usa.  Asi paso: libc++ moria en un `#error` porque el shim
      * habia anulado todas las consultas.
      *
-     * La respuesta depende de si de verdad se puede contestar.  `__has_include`
-     * siempre, porque pregunta por el sistema de ficheros y eso lo sabe vpp.
-     * El resto solo con un compilador al que preguntar; sin el, decir que no
-     * esta definido es lo correcto, porque deja que el shim instale su 0 y el
-     * codigo tome su rama de reserva.
+     * La respuesta no se deduce de la forma del nombre: se PREGUNTA.
+     * `__has_include` lo contesta vpp, porque pregunta por el sistema de
+     * ficheros.  El resto necesita un compilador que ademas LO TENGA -- el
+     * juego de operadores cambia con el lenguaje y con la version -- y sin
+     * compilador la respuesta correcta es que no, porque deja que el shim
+     * instale su 0 y el codigo tome su rama de reserva.
      *
      * @param name Identificador tal y como aparece en la directiva.
      * @return true si vpp puede contestar a ese operador.
      */
-    bool capability_is_defined(const std::string& name) const;
+    bool can_answer_capability(const std::string& name);
 
     /**
      * @brief Dice si un nombre esta definido a efectos de `#ifdef` y `defined`.
@@ -326,7 +326,7 @@ private:
      * @param name Identificador tal y como aparece en la directiva.
      * @return true si esta definido.
      */
-    bool name_is_defined(const std::string& name) const;
+    bool name_is_defined(const std::string& name);
 
     /**
      * @brief Precarga los conjuntos de macros de `predef_sources`.

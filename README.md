@@ -193,6 +193,19 @@ se declara, el shim entra y el codigo toma su rama de reserva -- que es
 exactamente para lo que el shim existe.  `__has_include` consta como definido
 siempre, porque no necesita compilador.
 
+Que un operador este definido tampoco se supone: se pregunta.  El juego depende
+del MODO, no solo del compilador -- clang tiene `__has_cpp_attribute`
+compilando C++ y no compilando C -- y darlo por bueno lleva a consultar algo
+que ese compilador rechaza, y con ello a ramas que el nunca habria tomado.
+
+Por el mismo motivo se delegan tambien los **predicados propios** de cada
+compilador, los que no empiezan por `__has_`: `__is_target_arch`,
+`__is_target_vendor`, `__is_identifier` y demas.  Las cabeceras de macOS los
+usan de verdad.  Solo se delega un nombre que empiece por `__`, vaya seguido de
+un parentesis y que el compilador de destino tenga; sin esas tres condiciones,
+cualquier identificador seguido de un parentesis se tomaria por uno de ellos y
+una expresion mal escrita se quedaria sin diagnostico.
+
 ---
 
 ### Operadores en cuerpo de macros
@@ -1472,7 +1485,7 @@ que el estandar **exige**, y por eso podian estar en verde mientras
 
 | Suite | Que mide |
 | :---- | :------- |
-| `vpp_test_conformance` | 44 casos preprocesados con vpp y con `gcc`/`clang`, comparando las salidas |
+| `vpp_test_conformance` | 45 casos preprocesados con vpp y con `gcc`/`clang`, comparando las salidas |
 | `vpp_test_system_headers` | Preprocesa un fuente con cabeceras de C del sistema, **compila** la salida y **ejecuta** el binario |
 | `vpp_test_system_headers_cxx` | Lo mismo con `<string>`, `<vector>`, `<algorithm>` e `<iostream>`: es el unico sitio donde `#include_next` y los operadores de prueba de caracteristicas se ejercitan de verdad |
 
@@ -1485,7 +1498,7 @@ Los casos que se sepa que fallan van en `tests/conformance/xfail.txt` con la
 explicacion de que falla.  Uno listado que falla no rompe la suite; uno que
 **pasa** se reporta como XPASS y si la rompe, para obligar a sacarlo de la lista
 al arreglar el bug.  Asi el fichero no puede quedarse mintiendo sobre el estado
-real.  Ahora mismo la lista esta vacia: 44/44.
+real.  Ahora mismo la lista esta vacia: 45/45.
 
 Las tres se registran solo si hay un compilador de referencia; sin el se
 omiten en vez de dar un rojo que no dice nada del codigo.

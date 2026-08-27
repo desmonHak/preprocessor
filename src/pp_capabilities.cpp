@@ -23,7 +23,16 @@ namespace vpp {
 namespace {
 /// Marca que se busca en la salida del compilador para leer su respuesta.
 const char* const kMarca = "__VPP_CAP__";
+
+/// Destino al que se tira la salida de error del compilador.
+#ifdef _WIN32
+const char* const kNulo = "NUL";
+#else
+const char* const kNulo = "/dev/null";
+#endif
 }
+
+const char* const kOpDefined = "#defined";
 
 bool is_capability_operator(const std::string& name) noexcept {
     return name.compare(0, 6, "__has_") == 0 && name.size() > 6;
@@ -62,7 +71,15 @@ int64_t CapabilityOracle::ask(const std::string& op,
     {
         std::ofstream ofs(tmp, std::ios::binary);
         if (!ofs) return 0;
-        ofs << "#if " << op << "(" << arg << ")\n"
+        // El pseudo-operador kOpDefined no pregunta cuanto vale algo sino si
+        // existe siquiera.  Es una pregunta distinta y hace falta: en modo C,
+        // clang no tiene `__has_cpp_attribute`, y darlo por bueno lleva a
+        // consultarlo y a que el compilador falle por una pregunta que nunca
+        // debio hacerse.
+        const std::string cond = (op == kOpDefined)
+                                   ? ("defined(" + arg + ")")
+                                   : (op + "(" + arg + ")");
+        ofs << "#if " << cond << "\n"
             << kMarca << " 1\n"
             << "#else\n"
             << kMarca << " 0\n"
@@ -70,7 +87,11 @@ int64_t CapabilityOracle::ask(const std::string& op,
     }
 
     int64_t valor = 0;
-    const std::string cmd = m_command + " \"" + tmp.string() + "\"";
+    // La salida de error del compilador se descarta.  Una consulta que el
+    // compilador rechace es una RESPUESTA -- "eso no lo tengo" -- y dejar que
+    // sus quejas salgan por la salida de error de vpp las convertiria en
+    // diagnosticos del fuente del usuario, que no lo son.
+    const std::string cmd = m_command + " \"" + tmp.string() + "\" 2>" + kNulo;
     if (FILE* pipe = VPP_CAP_POPEN(cmd.c_str(), "r")) {
         char buf[512];
         std::string out;
@@ -102,6 +123,10 @@ int64_t CapabilityOracle::query(const std::string& op,
     const int64_t valor = ask(op, arg);
     m_cache.emplace(k, valor);
     return valor;
+}
+
+bool CapabilityOracle::is_known(const std::string& name) {
+    return query(kOpDefined, name) != 0;
 }
 
 } // namespace vpp

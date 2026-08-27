@@ -72,23 +72,25 @@ void Preprocessor::add_predef_source(PredefKind kind,
 }
 
 
-bool Preprocessor::capability_is_defined(const std::string& name) const {
-    if (!is_capability_operator(name)) return false;
-
+bool Preprocessor::can_answer_capability(const std::string& name) {
     // `__has_include` no necesita compilador: se contesta con las rutas de
     // busqueda, que vpp ya tiene.
     if (name == "__has_include" || name == "__has_include_next") return true;
 
-    // Se mira la OPCION y no el estado del oraculo: la orden se le pasa al
-    // oraculo de forma perezosa, en la primera consulta de verdad, asi que
-    // preguntarle a el aqui daria "no hay compilador" hasta que ya fuese tarde
-    // -- y este predicado se consulta ANTES, en el `#ifndef` que decide si se
-    // instala el shim.
-    return !m_opts.capabilities_command.empty();
+    // Para el resto hace falta un compilador...
+    if (m_opts.capabilities_command.empty()) return false;
+
+    // ...y que ESE compilador lo tenga.  No vale con reconocer la forma del
+    // nombre: el juego de operadores cambia con el lenguaje y con la version,
+    // y dar por bueno uno que no existe lleva a preguntar algo que el
+    // compilador rechaza y a tomar una rama que el nunca habria tomado.  Asi
+    // fallaba `__has_cpp_attribute` al procesar cabeceras de C.
+    return m_capabilities.is_known(name);
 }
 
-bool Preprocessor::name_is_defined(const std::string& name) const {
-    return m_macros.is_defined(name) || capability_is_defined(name);
+bool Preprocessor::name_is_defined(const std::string& name) {
+    return m_macros.is_defined(name) ||
+           (is_capability_operator(name) && can_answer_capability(name));
 }
 
 int64_t Preprocessor::resolve_capability(const std::string& op,
@@ -119,8 +121,8 @@ int64_t Preprocessor::resolve_capability(const std::string& op,
         return buscador.resolve(ruta, sistema, desde).found ? 1 : 0;
     }
 
-    // El resto pregunta por el compilador, y de eso se encarga el oraculo.
-    m_capabilities.set_command(m_opts.capabilities_command);
+    // El resto pregunta por el compilador, y de eso se encarga el oraculo.  La
+    // orden ya se le paso al arrancar el proceso.
     return m_capabilities.query(op, arg);
 }
 
@@ -194,6 +196,12 @@ void Preprocessor::load_predefines() {
 
 std::string Preprocessor::process(const std::string& source,
                                    const std::string& filename) {
+    // Se le pasa al oraculo con QUIEN tiene que hablar antes de nada.  Hacerlo
+    // aqui y no en la primera consulta importa: hay preguntas -- si un operador
+    // existe siquiera -- que se hacen antes que ninguna consulta de valor, y
+    // hasta entonces el oraculo diria que no hay compilador.
+    m_capabilities.set_command(m_opts.capabilities_command);
+
     // Primero los conjuntos precargados y despues los -D sueltos, para que un
     // -D pueda pisar lo que traiga el volcado: es mas especifico.
     load_predefines();
@@ -673,7 +681,7 @@ bool Preprocessor::eval_condition(const std::vector<PPToken>& tokens,
             return resolve_capability(op, arg);
         },
         [this](const std::string& name) {
-            return capability_is_defined(name);
+            return can_answer_capability(name);
         });
     return eval.evaluate(tokens, loc) != 0;
 }

@@ -25,6 +25,14 @@ namespace vpp {
 bool is_capability_operator(const std::string& name) noexcept;
 
 /**
+ * @brief Pseudo-operador con el que se pregunta si un nombre EXISTE.
+ *
+ * No es un operador de verdad: es la clave con la que se guarda esa pregunta
+ * en la memoria del oraculo, para que conviva con las de valor sin mezclarse.
+ */
+extern const char* const kOpDefined;
+
+/**
  * @brief Responde a los operadores `__has_builtin`, `__has_attribute` y demas.
  *
  * Esos operadores NO preguntan por una macro: preguntan por lo que sabe hacer
@@ -79,6 +87,20 @@ public:
      *         mucho mas tarde y mucho peor.
      */
     int64_t query(const std::string& op, const std::string& arg);
+
+    /**
+     * @brief Pregunta al compilador si un nombre existe para el.
+     *
+     * Distinta de query(): esta no pide un valor sino la existencia.  Hace
+     * falta porque el juego de operadores depende del modo -- clang tiene
+     * `__has_cpp_attribute` compilando C++ y no compilando C -- y darlos todos
+     * por buenos lleva a preguntar cosas que ese compilador rechaza, y con
+     * ellas a ramas que el nunca habria tomado.
+     *
+     * @param name Nombre a comprobar.
+     * @return true si el compilador lo tiene definido.
+     */
+    bool is_known(const std::string& name);
 
     /** @brief Cuantas respuestas hay recordadas. @return Numero de entradas. */
     std::size_t remembered() const noexcept { return m_cache.size(); }

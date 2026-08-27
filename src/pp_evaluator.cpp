@@ -4,6 +4,7 @@
  */
 
 #include "preprocessor/pp_evaluator.h"
+#include "preprocessor/pp_capabilities.h"
 #include <stdexcept>
 #include <climits>
 
@@ -25,7 +26,7 @@ bool PPEvaluator::name_is_defined(const std::string& name) const {
     // cabeceras que se protegen con `#ifndef __has_builtin` se instalan una
     // macro que responde 0 a todo y anulan todas las consultas posteriores.
     return m_macros.is_defined(name) ||
-           (m_cap_known && m_cap_known(name));
+           (is_capability_operator(name) && m_cap_known && m_cap_known(name));
 }
 std::vector<PPToken> PPEvaluator::resolve_defined(
         const std::vector<PPToken>& tokens) const {
@@ -200,6 +201,12 @@ PPToken PPEvaluator::consume() {
 
 bool PPEvaluator::check(PPTokenType t) const {
     return cur().type == t;
+}
+
+bool PPEvaluator::peek_is_lparen() const {
+    size_t k = m_pos;
+    while (k < m_toks.size() && m_toks[k].type == PPTokenType::WHITESPACE) ++k;
+    return k < m_toks.size() && m_toks[k].type == PPTokenType::LPAREN;
 }
 
 bool PPEvaluator::match(PPTokenType t) {
@@ -473,18 +480,35 @@ PPValue PPEvaluator::parse_primary() {
     if (check(PPTokenType::IDENT)) {
         PPToken t = consume();
 
-        // Operadores de prueba de caracteristicas: __has_builtin, __has_include
-        // y companeros.
+        // Operadores del compilador: los `__has_builtin` y companeros, y
+        // tambien los predicados propios de cada compilador -- `__is_target_arch`,
+        // `__is_identifier` y demas -- que aparecen en las cabeceras del
+        // sistema.
         //
         // Se atienden AQUI y no como macros porque no lo son: preguntan por lo
         // que sabe hacer el compilador de destino.  Si el usuario define una
         // macro con ese nombre, no se llega hasta aqui -- la expansion la habra
         // sustituido antes -- de modo que definirla es la forma de imponer una
         // respuesta propia sin tocar nada mas.
-        if (t.value.rfind("__has_", 0) == 0) {
+        //
+        // Los predicados que no son `__has_*` solo se delegan si el compilador
+        // de destino LOS TIENE.  Sin esa comprobacion, cualquier identificador
+        // seguido de un parentesis se tomaria por uno de ellos y una expresion
+        // mal escrita se quedaria sin diagnostico.
+        const bool es_operador = is_capability_operator(t.value);
+        const bool es_predicado =
+            !es_operador &&
+            t.value.compare(0, 2, "__") == 0 &&
+            peek_is_lparen() &&
+            m_cap_known && m_cap_known(t.value);
+
+        if (es_operador || es_predicado) {
             // El argumento se toma EN CRUDO: puede ser <vector>, "x.h" o un
             // identificador, y ninguno de los tres se parsea como expresion.
             std::string arg;
+            // Puede haber espacio entre el nombre y el parentesis; el operador
+            // sigue siendo el mismo.
+            while (check(PPTokenType::WHITESPACE)) consume();
             if (check(PPTokenType::LPAREN)) {
                 consume();
                 int prof = 1;
