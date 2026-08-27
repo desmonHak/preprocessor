@@ -18,10 +18,72 @@ namespace vpp {
  * el estilo de comentarios que debe ignorar durante la expansion de macros.
  */
 struct LexerOptions {
+    /**
+     * @brief Lo que marca el comienzo de una directiva.
+     *
+     * `#` es el de C, y por eso es el de por omision, pero vpp no es un
+     * preprocesador de C: en Python, shell, Ruby, Make o YAML el `#` es un
+     * COMENTARIO, y tomarlo por directiva se come lineas que no son suyas.
+     *
+     * Con el marcador declarado no hay que elegir entre cazar erratas y
+     * respetar el lenguaje: lo que empieza por el marcador es una directiva y
+     * un nombre desconocido ahi es un error; lo que no, es texto y sale intacto.
+     *
+     * Puede tener varios caracteres (`//#`, `;;`) para lenguajes en los que
+     * conviene que la directiva sea ademas un comentario del propio lenguaje.
+     */
+    std::string directive_marker = "#";
+
     bool strip_line_comments  = true;  ///< Ignorar comentarios de linea //
     bool strip_block_comments = true;  ///< Ignorar comentarios de bloque /* */
+
+    /**
+     * @brief Secuencia que abre un comentario de linea.
+     *
+     * `//` es la de C, y por eso es la de por omision, pero no es universal:
+     * Lua y SQL usan `--`, Python y shell `#`, Lisp `;`.  Poder declararla
+     * -- y no solo apagar la de C -- es lo que hace que vpp entienda de verdad
+     * los comentarios de otro lenguaje en lugar de dejarlos pasar como texto,
+     * donde una macro que se mencione dentro SI se expandiria.
+     */
+    std::string line_comment       = "//";
+
+    /** @brief Secuencia que abre un comentario de bloque (`/ *` en C). */
+    std::string block_comment_open  = "/*";
+
+    /** @brief Secuencia que lo cierra (`* /` en C). */
+    std::string block_comment_close = "*/";
     bool keep_whitespace      = false; ///< Preservar tokens WHITESPACE en directivas
+    /**
+     * @brief Reconocer cadenas crudas de C++ (`R"delim( ... )delim"`).
+     *
+     * Se puede apagar para un lenguaje en el que un identificador acabado en R
+     * pueda ir pegado a una comilla y signifique otra cosa.  Activado por
+     * omision porque el tratamiento de comillas ya es el de C.
+     */
+    bool raw_strings         = true;
+
+    /**
+     * @brief Tratar `"` como comienzo de un literal de cadena.
+     *
+     * Apagarlo hace que la comilla sea texto corriente.  Hace falta en un
+     * lenguaje -- o en texto llano -- donde no delimite nada, porque entonces
+     * la comilla de apertura no tiene cierre y el literal se come el resto.
+     */
+    bool strings             = true;
+
+    /**
+     * @brief Tratar `'` como comienzo de un literal de caracter.
+     *
+     * Va aparte de `strings` porque son dos decisiones distintas: SQL usa la
+     * comilla simple para cadenas y la doble para identificadores, Rust la
+     * simple tambien para tiempos de vida, y en texto llano es un apostrofo.
+     * Con esto encendido, `It's a test` fallaba con "literal de cadena sin
+     * cerrar" -- una frase corriente en ingles.
+     */
+    bool char_literals       = true;
 };
+
 
 /**
  * @brief Lexer del preprocesador.
@@ -61,7 +123,14 @@ public:
 
 private:
     std::string       m_src;    ///< Texto fuente completo
-    std::string       m_file;   ///< Nombre del archivo
+    /**
+     * @brief Nombre del archivo, ya compartido.
+     *
+     * Se interna UNA vez al construir el lexer y desde ahi cada token recibe el
+     * mismo puntero.  Guardarlo por valor obligaba a copiar la ruta en cada
+     * ubicacion, y eso es una reserva de memoria por token.
+     */
+    const std::string* m_file;
     DiagnosticEngine& m_diag;   ///< Motor de diagnosticos
     LexerOptions      m_opts;   ///< Opciones del lexer
     size_t            m_pos;    ///< Posicion actual en m_src
@@ -96,6 +165,13 @@ private:
      * @return true si m_pos >= m_src.size().
      */
     bool at_end() const noexcept;
+
+    /**
+     * @brief Indica si en la posicion actual empieza la secuencia dada.
+     * @param s Secuencia a comparar.
+     * @return true si el texto que viene empieza por ella.
+     */
+    bool matches_ahead(const std::string& s) const;
 
     /**
      * @brief Devuelve la ubicacion actual como SourceLocation.
@@ -144,6 +220,17 @@ private:
      * @brief Escanea un literal numerico desde la posicion actual.
      * @return Token NUMBER con el valor textual del numero.
      */
+    /**
+     * @brief Escanea un "numero de preprocesado" segun la regla del estandar.
+     *
+     * Mas amplia que la de un numero: absorbe letras, guiones bajos, puntos y
+     * el signo que sigue a un exponente, de modo que 200112L o 1.5e-9 son UN
+     * solo token.  Partirlos rompe el pegado con ##.
+     *
+     * @return Token NUMBER con el literal completo.
+     */
+    PPToken scan_pp_number();
+
     PPToken scan_number();
 
     /**
@@ -152,6 +239,14 @@ private:
      * @return Token STRING o CHAR_LIT con el contenido de la cadena.
      */
     PPToken scan_string(char delim);
+
+    /**
+     * @brief Lee una cadena cruda de C++ a partir de su prefijo.
+     * @param s Texto ya leido (el prefijo), al que se anade el resto.
+     * @param l Ubicacion del comienzo del literal.
+     * @return Token STRING con el literal entero, delimitadores incluidos.
+     */
+    PPToken scan_raw_string(std::string s, const SourceLocation& l);
 
     /**
      * @brief Escanea una cadena entre angulos <...> para #include.

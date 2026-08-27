@@ -23,6 +23,58 @@ else()
     set(VPP_IS_TOP_LEVEL OFF)
 endif()
 
+
+# ---------------------------------------------------------------------------
+#  Configuracion Profile: Release CON simbolos, para perfilar de verdad
+# ---------------------------------------------------------------------------
+#
+# Por que no vale ninguna de las que ya hay.  Un perfil sobre Debug dice QUE
+# codigo existe, no CUANTO pesa: sin meter en linea, cualquier funcion pequena
+# llamada a menudo copa la lista y se acaba optimizando lo que no toca.  Y
+# RelWithDebInfo es otro nivel de optimizacion, es decir otro programa, y por
+# tanto otras proporciones.
+#
+# Profile PARTE de los flags de Release y solo anade lo que el perfilador
+# necesita para atribuir tiempo:
+#
+#   -g                       simbolos; sin ellos hay que traducir direcciones a mano
+#   -fno-omit-frame-pointer  pilas de llamada fiables (Release las omite)
+#
+# El nivel de optimizacion NO se toca.  Si cambiara, se estaria midiendo un
+# programa distinto del que se ejecuta, que es justo el error que esto evita.
+#
+#   cmake -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Profile -B cmake-build-profile
+if(NOT MSVC)
+    set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE} -O2 -g -fno-omit-frame-pointer"
+        CACHE STRING "Flags C++ para perfilar (Release + simbolos)" FORCE)
+    set(CMAKE_C_FLAGS_PROFILE "${CMAKE_C_FLAGS_RELEASE} -O2 -g -fno-omit-frame-pointer"
+        CACHE STRING "Flags C para perfilar (Release + simbolos)" FORCE)
+else()
+    set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Zi"
+        CACHE STRING "Flags C++ para perfilar (Release + simbolos)" FORCE)
+    set(CMAKE_C_FLAGS_PROFILE "${CMAKE_C_FLAGS_RELEASE} /O2 /Zi"
+        CACHE STRING "Flags C para perfilar (Release + simbolos)" FORCE)
+endif()
+
+# Se enlaza como Release SALVO el estripado: `--strip-all` borra justo lo que
+# hace falta para atribuir cada muestra a una funcion.  En MSVC hay que pedir
+# los .pdb explicitamente, que es lo que lee el perfilador.
+if(NOT MSVC)
+    set(CMAKE_EXE_LINKER_FLAGS_PROFILE "${CMAKE_EXE_LINKER_FLAGS_RELEASE}"
+        CACHE STRING "Flags de enlazado para perfilar" FORCE)
+    set(CMAKE_SHARED_LINKER_FLAGS_PROFILE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE}"
+        CACHE STRING "Flags de enlazado dinamico para perfilar" FORCE)
+else()
+    set(CMAKE_EXE_LINKER_FLAGS_PROFILE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /DEBUG"
+        CACHE STRING "Flags de enlazado para perfilar" FORCE)
+    set(CMAKE_SHARED_LINKER_FLAGS_PROFILE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /DEBUG"
+        CACHE STRING "Flags de enlazado dinamico para perfilar" FORCE)
+endif()
+
+if(CMAKE_CONFIGURATION_TYPES)
+    list(APPEND CMAKE_CONFIGURATION_TYPES Profile)
+    list(REMOVE_DUPLICATES CMAKE_CONFIGURATION_TYPES)
+endif()
 # --- opciones de compilacion -----------------------------------------------
 
 option(VPP_BUILD_TESTS  "Compilar los tests del preprocesador" ON)
@@ -95,11 +147,23 @@ endif()
 
 # Nucleo del preprocesador: la API C++.
 set(VPP_SOURCES
+    src/pp_deps.cpp
+    src/pp_diag_render.cpp
+    src/pp_source_map.cpp
+    src/pp_dialect.cpp
+    src/pp_name_pool.cpp
     src/pp_diagnostics.cpp
     src/pp_lexer.cpp
     src/pp_parser.cpp
     src/pp_macro.cpp
     src/pp_evaluator.cpp
+    src/pp_system.cpp
+    src/pp_atomic_write.cpp
+    src/pp_compiler_id.cpp
+    src/pp_facts_cache.cpp
+    src/pp_command_cache.cpp
+    src/pp_capabilities.cpp
+    src/pp_include.cpp
     src/preprocessor.cpp
 )
 
@@ -295,7 +359,10 @@ if(VPP_BUILD_SHARED)
         # NINGUN simbolo C++ sale de ella -- si salieran, podrian interponerse
         # con los de la libstdc++ del programa anfitrion.  Aqui lo garantiza el
         # version script de arriba: la .so exporta 23 simbolos y todos son C.
-        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        # En macOS NO: el clang de Apple no acepta -static-libgcc, y ademas la
+        # libc++ viene con el sistema, asi que la dependencia no es un problema
+        # de distribucion como si lo es la libstdc++ en Linux.
+        if(NOT APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
             target_link_options(vpp_shared PRIVATE
                 -static-libgcc -static-libstdc++)
         endif()
@@ -310,7 +377,7 @@ if(VPP_BUILD_EXE)
 
     # Mismo motivo que en la biblioteca: el ejecutable viaja en el paquete base
     # y no debe exigir una libstdc++6 concreta del sistema donde se instale.
-    if(NOT WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    if(NOT WIN32 AND NOT APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_link_options(vpp PRIVATE -static-libgcc -static-libstdc++)
     endif()
 

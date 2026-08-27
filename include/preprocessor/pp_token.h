@@ -4,30 +4,62 @@
  */
 #pragma once
 
+#include "pp_name_pool.h"
+
 #include <string>
 #include <cstdint>
 
 namespace vpp {
 
 /**
- * @brief Ubicacion de un token dentro del codigo fuente.
+ * @brief Ubicacion de un token en el fuente.
+ *
+ * El nombre del fichero NO se guarda por valor sino como puntero a un nombre
+ * compartido (ver pp_name_pool.h).  Es lo que hace que copiar una ubicacion
+ * -- cosa que pasa millones de veces, porque cada token lleva la suya y los
+ * tokens se copian mucho -- no reserve memoria.  Guardarlo por valor la
+ * reservaba siempre: una ruta de cabecera no cabe en el buffer pequeno de
+ * `std::string`.
  */
 struct SourceLocation {
-    std::string file;   ///< Nombre del archivo fuente
-    uint32_t    line;   ///< Numero de linea (base 1)
-    uint32_t    col;    ///< Columna (base 1)
+    const std::string* file_name; ///< Nombre del fichero, compartido; nunca nulo
+    uint32_t           line;      ///< Numero de linea (base 1)
+    uint32_t           col;       ///< Columna (base 1)
 
-    /** @brief Constructor por defecto: archivo vacio, linea 1, columna 1. */
-    SourceLocation() : line(1), col(1) {}
+    /** @brief Constructor por defecto: sin fichero, linea 1, columna 1. */
+    SourceLocation() noexcept
+        : file_name(empty_file_name()), line(1), col(1) {}
 
     /**
-     * @brief Constructor con parametros.
-     * @param f Nombre del archivo.
+     * @brief Constructor a partir de un nombre ya compartido.
+     *
+     * Es el camino rapido y el que usa quien produce tokens: se interna el
+     * nombre una vez al abrir el fichero y desde ahi cada ubicacion solo copia
+     * un puntero.
+     *
+     * @param f Nombre compartido; nulo se toma como "sin fichero".
      * @param l Numero de linea.
-     * @param c Numero de columna.
+     * @param c Columna.
      */
-    SourceLocation(std::string f, uint32_t l, uint32_t c)
-        : file(std::move(f)), line(l), col(c) {}
+    SourceLocation(const std::string* f, uint32_t l, uint32_t c) noexcept
+        : file_name(f ? f : empty_file_name()), line(l), col(c) {}
+
+    /**
+     * @brief Constructor a partir de un nombre suelto, que se interna.
+     *
+     * Comodo para los pocos sitios que construyen una ubicacion aislada.  NO
+     * debe usarse por token: internar toma un cerrojo, y a esa frecuencia se
+     * notaria.
+     *
+     * @param f Nombre del fichero.
+     * @param l Numero de linea.
+     * @param c Columna.
+     */
+    SourceLocation(const std::string& f, uint32_t l, uint32_t c)
+        : file_name(intern_file_name(f)), line(l), col(c) {}
+
+    /** @brief Nombre del fichero. @return El nombre, vacio si no hay. */
+    const std::string& file() const noexcept { return *file_name; }
 
     /**
      * @brief Devuelve la ubicacion como cadena "archivo:linea:col".

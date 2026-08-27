@@ -6,6 +6,17 @@ con cualquier lenguaje de texto plano. Tambien actua como herramienta de
 construccion (builder), permitiendo ejecutar comandos del sistema y generar
 codigo durante el preprocesado.
 
+El marcador de directiva no esta cableado: `#` es el de C y el de por omision,
+pero el fichero puede declarar el suyo -- ver
+[Cualquier lenguaje](#cualquier-lenguaje-el-marcador-de-directiva) -- porque en
+Python, shell, Ruby o Make el `#` es un comentario y no una directiva.
+
+Implementa ademas el preprocesador que exige el estandar de C -- y con el, el de
+C++ -- de modo que sirve para preprocesar codigo real: las cabeceras de la
+biblioteca estandar de ambos lenguajes pasan por el, y la salida compila y se
+ejecuta.  Eso se comprueba en cada build, no se afirma aqui (ver
+[Conformidad con el preprocesador de C](#conformidad-con-el-preprocesador-de-c)).
+
 ---
 
 ## Caracteristicas
@@ -36,6 +47,18 @@ codigo durante el preprocesado.
 | `__VPP_VERSION_MAJOR__`  | Version mayor del preprocesador (e.g. `1`)  |
 | `__VPP_VERSION_MINOR__`  | Version menor del preprocesador (e.g. `0`)  |
 
+El valor de `__FILE__` y `__LINE__` se resuelve en el momento de EXPANDIR, no
+al arrancar, de modo que dentro del cuerpo de una macro dan la posicion donde se
+**invoca** y no donde se definio -- que es justo para lo que sirven:
+
+```
+#define AQUI __FILE__ ":" __LINE__
+x = AQUI          // -> "prog.c" ":" 2
+```
+
+`__COUNTER__` se consume por expansion, asi que dos usos en la misma linea dan
+valores distintos.
+
 ### Directivas soportadas
 
 ```
@@ -44,10 +67,13 @@ codigo durante el preprocesado.
 #undef   NAME                             elimina macro
 #include "archivo"                        incluir archivo (relativo)
 #include <archivo>                        incluir archivo (ruta de sistema)
+#include_next <archivo>                   reanuda la busqueda tras la ruta actual
 #if      expr                             condicional por expresion
 #ifdef   NAME                             condicional si esta definido
 #ifndef  NAME                             condicional si NO esta definido
 #elif    expr                             rama alternativa
+#elifdef  NAME                            rama alternativa si NAME esta definida
+#elifndef NAME                            rama alternativa si NO lo esta
 #else                                     rama por defecto
 #endif                                    cierre de bloque condicional
 #error   mensaje                          emite error y detiene
@@ -71,6 +97,158 @@ codigo durante el preprocesado.
 #macro   NAME(p1, p2, ...) ... #endmacro macro multilinea (genera bloques de codigo)
 ```
 
+Lo que empieza por el marcador y no es ninguna de estas es un **error**, no un
+aviso: el marcador es inequivoco, asi que solo puede ser una equivocacion.  Si
+en tu lenguaje ese caracter no marca directivas, declaralo (ver
+[Cualquier lenguaje](#cualquier-lenguaje-el-marcador-de-directiva)) y esas
+lineas pasaran a ser texto.
+
+### Directivas y operadores de C
+
+Ademas del dialecto propio, vpp implementa lo que exige el preprocesador de C.
+Lo que sigue no es obvio y conviene tenerlo escrito:
+
+**`#line N "fichero"`** cambia la posicion que reportan `__LINE__` y `__FILE__`
+a partir de la linea siguiente.  Sirve para que el codigo generado apunte a su
+fuente original en vez de al fichero intermedio.
+
+```
+#line 100 "original.vx"
+aqui = __LINE__        // -> 100
+de   = __FILE__        // -> "original.vx"
+```
+
+**`_Pragma("texto")`** equivale a escribir `#pragma texto`.  Existe porque una
+macro no puede generar una directiva, y este operador es la via que da el
+estandar para conseguirlo:
+
+```
+#define EMPAQUETAR(n) _Pragma(#n)
+EMPAQUETAR(pack(1))    // -> #pragma pack(1)
+```
+
+**Reescaneo.**  El resultado de expandir una macro se relee junto con los
+tokens que le SIGUEN, no solo por su cuenta.  Es lo que hace funcionar el
+idioma con el que se elige macro segun el numero de argumentos:
+
+```
+#define ELIGE(_1,_2,_3,NOMBRE,...) NOMBRE
+#define F(...) ELIGE(__VA_ARGS__, F3, F2, F1)(__VA_ARGS__)
+```
+
+`ELIGE(...)` produce el NOMBRE, y los parentesis que quedan a su lado son sus
+argumentos.  La macro que se acaba de expandir queda oculta mientras se relee,
+de modo que `#define R(x) R` con `R(1)(2)` da `R(2)` en vez de reentrar en R.
+
+**Aritmetica de `#if`** con las conversiones de C: si cualquiera de los
+operandos es sin signo, la operacion entera lo es.  Eso cambia resultados de
+forma poco intuitiva y conviene no olvidarlo:
+
+```
+#if -1 > 0u            // VERDADERO: el -1 se convierte en un valor enorme
+#if (-1 >> 1) == -1    // verdadero: con signo se replica el bit alto
+#if (0xFFFFFFFFFFFFFFFFu >> 60) == 15   // sin signo entran ceros
+```
+
+Un literal es sin signo si lleva sufijo `u`/`U`, o si no cabe en un entero con
+signo aunque no lo lleve.
+
+**Cadenas crudas de C++** (`R"delim( ... )delim"`) se leen enteras: dentro no
+hay escapes, ni comentarios, ni macros, ni directivas, y pueden ocupar varias
+lineas.  El delimitador es lo que las hace utiles, porque deja escribir `)"` en
+el contenido:
+
+```
+auto s = R"xy(esto tiene )" dentro y no cierra nada)xy";
+```
+
+Se puede apagar (`LexerOptions::raw_strings`) para un lenguaje en el que un
+identificador acabado en `R` pueda ir pegado a una comilla y signifique otra
+cosa.  Solo cuentan los cinco prefijos del estandar -- `R`, `LR`, `uR`, `UR`,
+`u8R` -- de modo que un `FOOR"..."` sigue siendo un identificador y una cadena
+normal.
+
+**`#include_next <fichero>`** repite la busqueda del fichero, pero empezando en
+el directorio SIGUIENTE a aquel donde aparecio el que la escribe.  Es como una
+cabecera se superpone a otra del mismo nombre sin perderla: la propia se
+encuentra primero, y desde dentro llega a la de debajo para completarla.  Toda
+la biblioteca estandar de C++ se apoya en esto para envolver las cabeceras de C.
+
+```
+// /usr/include/c++/15/math.h
+#include_next <math.h>     // la de C, no esta misma
+```
+
+Requiere saber DONDE aparecio cada fichero, no solo su nombre, asi que la
+busqueda lleva ese dato consigo (`IncludeSearch`, en `pp_include.h`).  De
+propina, un `#include "vecino.h"` escrito dentro de una cabecera hallada por una
+ruta de busqueda se resuelve al lado de ESA cabecera, que es lo correcto.
+
+**Operadores de prueba de caracteristicas.**  `__has_include`, `__has_builtin`,
+`__has_attribute`, `__has_c_attribute`, `__has_cpp_attribute`, `__has_feature`,
+`__has_extension` y `__has_declspec_attribute` se pueden usar en `#if`:
+
+```
+#if __has_include(<optional>)
+#  include <optional>
+#endif
+
+#if __has_builtin(__builtin_expect)
+#  define PROBABLE(x) __builtin_expect(!!(x), 1)
+#else
+#  define PROBABLE(x) (x)
+#endif
+```
+
+`__has_include` lo resuelve vpp por su cuenta, porque es una pregunta sobre el
+sistema de ficheros y ahi no hace falta nadie mas.  Los demas preguntan por
+capacidades DEL COMPILADOR, y vpp no es un compilador: no puede inventarse la
+respuesta sin mentir.  Asi que se la pregunta al compilador objetivo, el que se
+le indique con `--capabilities-from`:
+
+```bash
+vpp --capabilities-from "gcc -E -P -x c" fuente.c
+```
+
+Se le pasa una vez por operador y argumento distintos, y el resultado queda
+cacheado en memoria durante la ejecucion.  Sin `--capabilities-from` no hay a
+quien preguntar: `__has_include` sigue funcionando, y el resto **devuelve 0**,
+que es la respuesta honesta -- "no consta que exista" -- y la que hace que el
+codigo bien escrito tome su rama de reserva en vez de romperse.  Si se sabe la
+respuesta, se puede fijar a mano con `-D__has_builtin(x)=1` o similar.
+
+Estos operadores ademas **constan como definidos**, que es una pregunta
+distinta de cuanto valen y hay que contestarla igual.  Las bibliotecas estandar
+se protegen asi:
+
+```
+#ifndef __has_builtin
+#  define __has_builtin(x) 0
+#endif
+```
+
+Un preprocesador que no se declare capaz se come esa macro, y a partir de ahi
+toda consulta responde 0 aunque hubiera compilador al que preguntar.  Con
+`--capabilities-from` vpp se declara capaz y el shim no se instala; sin el, no
+se declara, el shim entra y el codigo toma su rama de reserva -- que es
+exactamente para lo que el shim existe.  `__has_include` consta como definido
+siempre, porque no necesita compilador.
+
+Que un operador este definido tampoco se supone: se pregunta.  El juego depende
+del MODO, no solo del compilador -- clang tiene `__has_cpp_attribute`
+compilando C++ y no compilando C -- y darlo por bueno lleva a consultar algo
+que ese compilador rechaza, y con ello a ramas que el nunca habria tomado.
+
+Por el mismo motivo se delegan tambien los **predicados propios** de cada
+compilador, los que no empiezan por `__has_`: `__is_target_arch`,
+`__is_target_vendor`, `__is_identifier` y demas.  Las cabeceras de macOS los
+usan de verdad.  Solo se delega un nombre que empiece por `__`, vaya seguido de
+un parentesis y que el compilador de destino tenga; sin esas tres condiciones,
+cualquier identificador seguido de un parentesis se tomaria por uno de ellos y
+una expresion mal escrita se quedaria sin diagnostico.
+
+---
+
 ### Operadores en cuerpo de macros
 
 | Operador | Descripcion                                          | Ejemplo                           |
@@ -89,6 +267,115 @@ Las expresiones de `#if` y `#elif` soportan:
 - Comparacion: `== != < > <= >=`
 - Ternario: `cond ? a : b`
 - Operador `defined(NAME)` y `defined NAME`
+
+
+---
+
+## Cualquier lenguaje: el marcador de directiva
+
+`#` es el marcador de C, y por eso es el de por omision.  Pero vpp no es un
+preprocesador de C, y en Python, shell, Ruby, Make, YAML o TOML el `#` es un
+**comentario**: tomarlo por directiva se come lineas que no son suyas.
+
+El fichero puede decir cual es el suyo, en sus primeras lineas:
+
+```python
+#!/usr/bin/env python3
+# vpp:marker=%
+# este comentario es de Python y sale intacto
+%define DOBLE 2
+def f(x): return x * DOBLE
+```
+
+Va en el fichero y no en la linea de ordenes a proposito: asi el dialecto viaja
+con el fuente en lugar de con la invocacion.  Una bandera hay que acordarse de
+pasarla, se pierde al mover el fichero a otro build, y no le dice nada a quien
+lo abre.  Es el mismo motivo por el que Python declara su codificacion en las
+dos primeras lineas en vez de esperarla del entorno.
+
+Se busca el texto `vpp:` sin exigir ninguna sintaxis alrededor, asi que la
+declaracion se escribe dentro del comentario del propio lenguaje -- y con eso se
+rompe el circulo vicioso de tener que conocer el lenguaje para leer la linea que
+dice cual es el lenguaje:
+
+```
+# vpp:marker=%           Python, shell, Ruby, Make, YAML
+-- vpp:marker=%          Lua, SQL, Haskell
+// vpp:marker=%          C, C++, Rust, Java
+<!-- vpp:marker=% -->    HTML, XML
+;; vpp:marker=%          Lisp, ensamblador
+```
+
+Se mira solo al principio (tres lineas, para dejar sitio a un shebang); mas
+abajo no cuenta, y si aparece alli se avisa en vez de no hacer nada en silencio.
+Para un fichero que no se pueda tocar -- generado, o de terceros -- esta
+`--marker`, y la declaracion del fichero le gana por ser mas concreta.
+
+### Lo que NO se pierde por el camino
+
+Una directiva mal escrita **sigue siendo un error**:
+
+```
+$ vpp typo.py
+typo.py:2:1: error: directiva de preprocesador desconocida: %defien
+```
+
+La alternativa facil habria sido dejar pasar lo desconocido, y entonces
+`%defien FOO 1` se colaria como texto sin que nadie se enterase.  Con el
+marcador declarado no hay que elegir: lo que empieza por el es una directiva y
+un nombre desconocido ahi es una equivocacion; lo que no, es texto y sale
+intacto.  Antes esto era un aviso Y ademas se tragaba la linea, que es lo peor
+de las dos opciones.
+
+
+### Comentarios y comillas
+
+Lo mismo vale para el resto de lo que el lexer da por sentado de C.  Los
+ajustes que admite la declaracion:
+
+| Ajuste | Que hace | Para que |
+| :----- | :------- | :------- |
+| `marker=X` | Que empieza una directiva | `#` es comentario en Python, shell, Ruby, Make |
+| `line-comments=0` | `//` deja de comentar | En Lua es division entera: `7 // 2` perdia el `// 2` **sin avisar** |
+| `block-comments=0` | `/* */` deja de comentar | Lenguajes que no los tienen |
+| `line-comment=SEQ` | Declara el comentario de linea del lenguaje | `--` en Lua y SQL, `;` en Lisp |
+| `block-comment-open=SEQ` | Y el de bloque | `--[[` en Lua |
+| `block-comment-close=SEQ` | Su cierre | `]]` en Lua |
+| `strings=0` | `"` deja de abrir cadena | Texto llano, o donde la comilla no delimite |
+| `char-literals=0` | `'` deja de abrir caracter | Un apostrofo: `It's a test` fallaba con "literal sin cerrar" |
+| `raw-strings=0` | `R"(...)"` deja de ser cruda | Donde un nombre pueda ir pegado a una comilla |
+
+```
+-- vpp:marker=% line-comments=0
+local n = 7 // 2            -- la division sobrevive
+```
+
+Apagar un comentario y **declarar** el propio no es lo mismo.  Apagado, el
+comentario del lenguaje sale como texto corriente, asi que una macro mencionada
+dentro SI se expande.  Declarado, vpp lo descarta como lo que es:
+
+```lua
+-- vpp:marker=% line-comment=-- block-comment-open=--[[ block-comment-close=]]
+%define N 9
+-- este comentario menciona N y no se toca
+--[[ el bloque
+tampoco ]]
+local x = N          -- aqui si: queda 9
+local y = 7 // 2     -- y // vuelve a ser division entera
+```
+
+El de bloque se comprueba antes que el de linea, que es lo que hace falta cuando
+uno es prefijo del otro -- en Lua `--[[` abre bloque y `--` abre linea.
+
+Estos ajustes hablan del **texto del lenguaje de destino**.  Dentro de una
+directiva rige siempre la sintaxis de vpp, asi que `#include "fichero.h"` sigue
+leyendo su cadena aunque `strings` este apagado -- que es justo el lenguaje en
+el que hara falta.
+### Alcance
+
+El dialecto es **de cada fichero** y no se hereda al incluir.  Un fuente en
+Python con marcador `%` puede hacer `%include "cabecera.h"` y esa cabecera se
+lee con el suyo.
 
 ---
 
@@ -837,17 +1124,43 @@ vpp archivo.vel
 # Preprocesar y guardar en un archivo de salida
 vpp archivo.vel -o archivo_pp.vel
 
+# Precargar las macros que predefine un compilador concreto
+vpp --predef-from "gcc -dM -E -" archivo.c
+
+# Precargar directivas desde un fichero (sirve para cualquier lenguaje)
+vpp --predef plataforma.def archivo.txt
+
+# Resolver __has_builtin y companeros preguntandole al compilador objetivo
+vpp --capabilities-from "gcc -E -P -x c" archivo.c
+
+# Recordar entre ejecuciones en otro sitio, o no recordar nada
+vpp --cache-dir build/.vpp-cache archivo.c
+vpp --no-cache archivo.c
+
 # Definir macros desde la linea de comandos
 vpp -DDEBUG -DVERSION=2 archivo.vel
 
+# Quitar una macro que traiga el volcado del compilador
+vpp --predef-from "gcc -dM -E -" -U__GNUC__ archivo.c
+
 # Anadir rutas de busqueda para #include
 vpp -I ./include -I /usr/local/vesta/include archivo.vel
+
+# Marcador de directiva para un fichero que no se puede tocar
+vpp --marker % generado.py
+
+# Lista de dependencias para make o ninja
+vpp --deps -I include main.c
+vpp -MD -MF build/main.d -I include main.c -o build/main.i
 
 # Leer desde stdin
 echo "#define X 1\nX" | vpp --stdin
 
 # Emitir marcadores #line (util para depuracion)
 vpp --line-markers archivo.vel -o out.vel
+
+# Dejar el texto sin expandir (solo se atienden las directivas)
+vpp --no-expand archivo.txt
 
 # Ver version
 vpp --version
@@ -856,6 +1169,206 @@ vpp --version
 vpp --help
 ```
 
+---
+
+## Precargar macros de otro compilador
+
+Un preprocesador que quiera tragarse codigo real necesita las macros que el
+compilador de destino da por hechas.  La diferencia es enorme: vpp predefine 3
+macros y `gcc` predefine 412.  Sin ellas, las cabeceras de la biblioteca
+estandar toman ramas equivocadas -- creen que no hay GCC, por ejemplo -- y la
+salida no compila aunque el preprocesado no haya dado un solo error.
+
+Se resuelve con dos opciones **genericas**: no hay ningun `--emulate=gcc` que
+hornee dentro de vpp el conocimiento de un compilador o de un lenguaje.
+
+```bash
+# desde la salida de un comando
+vpp --predef-from "gcc -dM -E -" -I/usr/include programa.c
+
+# desde un fichero de directivas escrito a mano
+vpp --predef mi_plataforma.def programa.lo-que-sea
+```
+
+Que la variante de comando apunte al **binario exacto** no es un detalle: es lo
+que permite que convivan varios compiladores y varias versiones en la misma
+maquina sin que vpp sepa nada de ninguno.
+
+```bash
+vpp --predef-from "gcc-12 -dM -E -"            ...
+vpp --predef-from "clang-15 -dM -E -x c++ -"   ...
+vpp --predef-from "arm-none-eabi-gcc -dM -E -" ...
+```
+
+Y como lo que se carga es simplemente **texto con directivas**, el mecanismo no
+esta atado a C.  Para un lenguaje propio basta con un fichero:
+
+```
+#define OBJETIVO_ES_64  1
+#define NOMBRE_ABI      "sysv"
+#define ALINEAR(x)      (((x) + 7) & ~7)
+```
+
+**Por que se procesa como fuente y no como una lista `nombre=valor`.**  Un
+volcado real trae macros funcion (`#define __glibcxx_assert(cond)`) y valores de
+varios tokens (`#define __SIZE_TYPE__ long unsigned int`).  Ninguna de las dos
+cosas cabe en un `nombre=valor`, asi que el bloque pasa por el pipeline completo
+y solo se conservan las macros; la salida se descarta.
+
+Un `-D` posterior gana al bloque precargado, por ser mas especifico.
+
+
+---
+
+## Memoria entre ejecuciones
+
+Preguntarle algo a un compilador cuesta lanzar un proceso.  El volcado de
+`--predef-from` se pide en CADA invocacion de vpp, asi que compilar N ficheros
+son N procesos para obtener exactamente lo mismo; y una unidad de C++ moderna
+consulta capacidades decenas de veces.  vpp recuerda ambas cosas entre
+ejecuciones:
+
+```bash
+# Por omision, en la cache del usuario.  No hay que hacer nada.
+vpp --predef-from "gcc -dM -E -" --capabilities-from "gcc -E -P -x c" a.c
+
+# En otro sitio, para una compilacion aislada o reproducible.
+vpp --cache-dir build/.vpp-cache ... a.c
+
+# Sin recordar nada, para medir el coste real o descartar la memoria.
+vpp --no-cache ... a.c
+```
+
+Medido en Windows sobre un fuente con tres consultas: **363 ms en frio, 24 ms en
+caliente, ~200 ms sin memoria**.
+
+### Por que la clave no es la orden
+
+Lo obvio seria guardar las respuestas bajo `"gcc -E -P -x c"`.  Eso miente en
+dos direcciones: `gcc` y `/usr/bin/gcc` son el mismo compilador con dos cadenas
+distintas, y -- lo que de verdad hace dano -- **la misma cadena pasa a
+significar otra cosa en cuanto se actualiza el compilador**.  Una memoria con esa
+clave devolveria respuestas viejas para siempre, sin dar la cara por ningun
+sitio.
+
+La clave es la identidad del BINARIO -- su ruta real, su tamano y su fecha, que
+cambian los tres al actualizarlo -- mas la orden entera, porque los flags
+cambian la respuesta tanto como el binario: `-x c++` habilita operadores que en
+C no existen, y `--target=` cambia lo que contestan los predicados de objetivo.
+Si el ejecutable no se puede localizar, **no se recuerda nada**: sin saber a
+quien se pregunta no hay forma de notar que ha cambiado.
+
+### Que NO se guarda
+
+- **`__has_include`**, porque pregunta por las rutas de busqueda de quien
+  compila, no por el compilador.  Es un hecho del proyecto, no suyo, y
+  recordarlo daria respuestas de otro proyecto.
+- **Las consultas que fallaron.**  Un fallo pasajero -- el compilador ocupado,
+  un PATH a medio poner -- no es una respuesta, y guardarlo lo dejaria escrito
+  como una propiedad del compilador: el error sobreviviria a su causa.
+
+### Compilaciones en paralelo
+
+Una compilacion con `-j` lanza muchos vpp a la vez sobre la misma memoria.  No
+hay ningun cerrojo y no hace falta: hay un fichero por compilador y se escribe
+entero en un temporal que despues se renombra encima, que es atomico en los dos
+sistemas.  Nadie lee jamas un fichero a medias.  Si dos procesos se pisan, lo
+peor que pasa es que una respuesta se vuelva a preguntar -- cada entrada es una
+funcion pura de (compilador, pregunta), asi que dos escritores no pueden
+discrepar.
+
+Los ficheros son texto y se pueden mirar a ojo:
+
+```
+$ cat ~/.cache/vpp/v1/496235fd9618b9f5.facts
+# vpp facts v1
+__has_builtin __builtin_expect	1
+#defined __has_cpp_attribute	0
+```
+
+Para limpiarla, se borra el directorio.  La version del formato va en el nombre
+(`v1/`), asi que un cambio de formato deja lo viejo donde esta en lugar de
+leerlo mal.
+
+
+---
+
+## Diagnosticos
+
+Un mensaje cita la linea que lo provoco y senala la columna:
+
+```
+t.c:2:1: error: directiva de preprocesador desconocida: #defien
+   2 | #defien FOO 1
+     | ^
+```
+
+Es la diferencia entre un diagnostico que se arregla y uno que se investiga.  Se
+resalta con color solo cuando la salida de error va a una terminal -- redirigida
+a un fichero, las secuencias ANSI son basura para quien despues lo lea o lo
+parsee -- y se respeta `NO_COLOR`.
+
+Si el fuente no esta disponible se da el mensaje de siempre sin adornos.  Pasa
+con lo que no viene del disco: la API, la entrada estandar, un `#exec`.
+
+Los tabuladores del original se reproducen en la linea del cursor en lugar de
+contarlos como un caracter; con espacios, el cursor acabaria senalando a otro
+sitio, que es peor que no ponerlo.
+---
+
+## Dependencias para el build
+
+Un build incremental necesita saber que rehacer cuando cambia una cabecera.  vpp
+emite la lista en el formato de `cc`, asi que sirve tal cual a make y a ninja:
+
+```bash
+# Solo la regla, sin preprocesar a la salida
+vpp --deps -I include main.c
+main.o: main.c include/a.h include/b.h
+
+# La salida normal Y las dependencias en un fichero
+vpp -MD -MF build/main.d -I include main.c -o build/main.i
+
+# Objetivo propio y objetivos ficticios
+vpp --deps -MT build/main.o -MP -I include main.c
+```
+
+| Opcion | Que hace |
+| :----- | :------- |
+| `--deps` | Emite solo la regla, sin la salida preprocesada |
+| `-MD` | Emite la regla ADEMAS de la salida |
+| `-MF <f>` | Escribe la regla en ese fichero en vez de en la salida |
+| `-MT <t>` | Nombre del objetivo (por omision, el fichero de salida) |
+| `-MP` | Anade una regla vacia por cada dependencia |
+| `-MM` | Como `--deps`, dejando fuera las cabeceras de sistema |
+| `-MMD` | Como `-MD`, dejando fuera las cabeceras de sistema |
+
+`-MP` esta para que borrar una cabecera no rompa el build: sin esas reglas, make
+lee la lista vieja, ve un fichero que ya no esta y se para -- cuando en realidad
+ya no hace falta, porque el fuente dejo de incluirlo.  El fuente principal se
+queda fuera a proposito: si ESE falta, pararse es lo correcto.
+
+Las rutas son las RESUELTAS, que son las unicas que le sirven a make, y salen
+con barras normales aunque sean de Windows, porque en un Makefile la barra
+invertida es un escape.  El espacio y el dolar van escapados por lo mismo.
+
+> **Por que `--deps` y no `-M`.**  En cc, `-M` es esto.  En vpp `-M` ya era la
+> ruta de busqueda de `#import`, y romperlo habria dejado de funcionar en
+> silencio a quien lo usara.  Los demas nombres si son los de cc, de modo que un
+> build system los emite tal cual; solo hay que traducir ese.
+
+Comprobado contra `gcc -M`: la salida es identica byte a byte, con y sin `-MP`.
+
+### Cabeceras de sistema
+
+`-isystem <ruta>` declara un directorio como ajeno: se busca DESPUES de las
+rutas `-I`, que es el orden de cc, y lo que aparezca en el queda fuera de la
+lista que emiten `-MM` y `-MMD`.  Rehacer el build porque cambio una cabecera
+del sistema no tiene sentido: si eso pasa, se recompila entero de todos modos.
+
+La regla es **transitiva**: lo que una cabecera de sistema incluya sigue siendo
+ajeno aunque lo encuentre por una ruta propia.  Comprobado contra `gcc -MM`,
+que da lo mismo.
 ---
 
 ## Uso como biblioteca (C++ API)
@@ -953,6 +1466,31 @@ x = A
 ", b"m.c", ctypes.byref(out))
 print(out.value.decode())
 ```
+
+### Precargar macros desde el ABI en C
+
+Las mismas tres vias que ofrece la linea de ordenes, para quien embebe la
+biblioteca:
+
+```c
+/* el texto lo consigue el programa anfitrion como quiera */
+vpp_add_predef_text(pp, "#define OBJETIVO 64
+#define DOBLE(x) ((x)*2)
+");
+
+/* desde un fichero */
+vpp_add_predef_file(pp, "plataforma.def");
+
+/* desde la salida de un comando -- OJO: esto LANZA UN PROCESO */
+vpp_add_predef_command(pp, "gcc-12 -dM -E -");
+```
+
+`vpp_add_predef_text` es la primitiva recomendada al embeber: no toca el sistema
+de ficheros ni lanza procesos, asi que el anfitrion mantiene el control de como
+obtiene esas macros.  Si esa restriccion no aplica, la variante de comando
+ahorra el trabajo intermedio.
+
+---
 
 ### Reglas de propiedad de memoria
 
@@ -1228,7 +1766,73 @@ ctest --output-on-failure -V
 ./vpp_test_new_features    ; arrays, exec, macros funcion integradas
 ./vpp_test_variables       ; directiva #set y todos los operadores de asignacion
 ./vpp_test_float_conv      ; macros de flotantes y conversion numerica
+./vpp_test_import          ; #import y rutas de modulos
+./vpp_test_c_api           ; el ABI en C
+./vpp_test_include_search  ; busqueda de inclusiones e #include_next
+./vpp_test_compiler_id     ; identidad del compilador
+./vpp_test_facts_cache     ; memoria entre ejecuciones
+./vpp_test_dialect         ; marcador de directiva por fichero
+./vpp_test_deps            ; lista de dependencias para el build
+./vpp_test_diag_render     ; diagnosticos con contexto
 ```
+
+### Integracion continua
+
+Cada push a `master` o `develop` compila y pasa la suite completa.  La
+matriz no es simetrica por capricho: cada entrada cubre algo que las demas no.
+
+| Trabajo | Que cubre |
+| :------ | :-------- |
+| `linux-gcc` | ELF, glibc y el version script que recorta los simbolos |
+| `macos-clang` | Mach-O y su lista de simbolos exportados |
+| `windows-msvc` | La rama MSVC del CMake y su forma de nombrar las bibliotecas |
+| `windows-mingw` | El toolchain con el que se construye de verdad en Windows |
+| `consumidor-externo` | Enlaza desde un proyecto en C PURO, por `find_package` y por `pkg-config` |
+
+El ultimo merece explicacion: compilar el propio vpp no demuestra que el ABI en
+C sirva.  Ese trabajo monta un proyecto que no tiene NADA de C++ -- ni siquiera
+el lenguaje habilitado en su `project()` -- y comprueba que enlaza y ejecuta.
+
+Hay ademas un test, `vpp_test_exports`, que verifica que la biblioteca compartida
+exporta UNICAMENTE el ABI en C.  Es la invariante que sostiene el diseno, y no
+es una precaucion teorica: en ELF ya se colaron nueve plantillas de libstdc++
+pese a tener la visibilidad oculta, y por eso hizo falta el version script.
+
+La matriz no es decorativa: los tres huecos de conformidad que quedaban -- el
+shim de `__has_builtin`, los operadores que solo existen en un modo y el
+reescaneo -- los encontro `macos-clang`, y ninguno se veia en Linux ni en
+Windows.  Las cabeceras de cada sistema aprietan por sitios distintos.
+
+---
+
+### Conformidad con el preprocesador de C
+
+Ademas de los tests unitarios hay tres suites cuyo oraculo es un compilador de
+verdad.  Existen porque los unitarios comprueban lo que vpp **construyo**, no lo
+que el estandar **exige**, y por eso podian estar en verde mientras
+`#if defined(X)` estaba roto.
+
+| Suite | Que mide |
+| :---- | :------- |
+| `vpp_test_conformance` | 46 casos preprocesados con vpp y con `gcc`/`clang`, comparando las salidas |
+| `vpp_test_system_headers` | Preprocesa un fuente con cabeceras de C del sistema, **compila** la salida y **ejecuta** el binario |
+| `vpp_test_system_headers_cxx` | Lo mismo con `<string>`, `<vector>`, `<algorithm>` e `<iostream>`: es el unico sitio donde `#include_next` y los operadores de prueba de caracteristicas se ejercitan de verdad |
+
+La comparacion es a nivel de **token**, no de linea: dos salidas con los mismos
+tokens compilan igual, y vpp diverge de gcc en el reparto por lineas a
+proposito, conservando los saltos de los comentarios de bloque para no
+descuadrar la numeracion de las etapas siguientes.
+
+Los casos que se sepa que fallan van en `tests/conformance/xfail.txt` con la
+explicacion de que falla.  Uno listado que falla no rompe la suite; uno que
+**pasa** se reporta como XPASS y si la rompe, para obligar a sacarlo de la lista
+al arreglar el bug.  Asi el fichero no puede quedarse mintiendo sobre el estado
+real.  Ahora mismo la lista esta vacia: 46/46.
+
+Las tres se registran solo si hay un compilador de referencia; sin el se
+omiten en vez de dar un rojo que no dice nada del codigo.
+
+---
 
 ### Cobertura de tests
 
@@ -1242,60 +1846,183 @@ ctest --output-on-failure -V
 | `vpp_test_new_features`| #array, #exec, macros cadenas (__STRLEN__ .. __TRIM__), macros numericas (__MIN__ .. __ALIGN__), aritmetica entera (__ADD__ .. __NEG__), bitwise (__AND__ .. __SAR__), comparaciones (__EQ__ .. __GE__), __ARRAY_FIND__, __ARRAY_JOIN__, __QUOTE__, __UNQUOTE__ |
 | `vpp_test_variables`   | #set con =, +=, -=, *=, /=, %=, &=, \|=, ^=, <<=, >>=, ++, -- |
 | `vpp_test_float_conv`  | Macros IEEE 754 (__FADD__ .. __FPI__), conversion (__DEC2HEX__ .. __ZEROEXT__) |
+| `vpp_test_import`      | #import, rutas de modulos y extensiones del dialecto           |
+| `vpp_test_c_api`       | El ABI en C completo: handles, diagnosticos, propiedad de la memoria |
+| `vpp_test_include_search` | Busqueda de inclusiones: precedencia de rutas, vecino relativo, `#include_next` |
+| `vpp_test_dialect`     | Marcador de directiva declarado en el fichero, y que una errata siga siendo error |
+| `vpp_test_deps`        | Lista de dependencias: objetivo, escapado, partido de lineas y objetivos ficticios |
+| `vpp_test_diag_render` | Diagnosticos con contexto: cita de la linea, posicion del cursor y tabuladores |
+| `vpp_test_compiler_id` | Identificacion del compilador: extraer el ejecutable, buscarlo por el PATH, y que la huella cambie al cambiar el binario o los flags |
+| `vpp_test_facts_cache` | Memoria entre ejecuciones: persistencia, separacion por compilador, fusion de escrituras y lo que se niega a guardar |
 
+
+---
+
+
+### Rendimiento
+
+Dos cosas dominaban el coste, y las dos se midieron con VTune antes y despues
+(carga: una unidad de C++ con 14 cabeceras estandar, 110782 lineas de salida):
+
+| | reloj | reservas |
+| :-- | --: | --: |
+| de partida | 1283 ms | 15 773 478 |
+| nombres de fichero compartidos | 693 ms | 2 361 047 |
+| + inclusion multiple | 310 ms | |
+| + menos reservas y menos disco | **246 ms** | 776 470 |
+
+Como referencia, `gcc -E` hace lo mismo en 126 ms: se paso de 10x mas lento a
+1,95x.
+
+**Nombres compartidos.**  Cada token lleva su ubicacion, y la ubicacion guardaba
+el nombre del fichero por valor.  Una ruta de cabecera pasa de los ochenta
+caracteres, no cabe en el buffer pequeno de `std::string` y por tanto reserva
+memoria SIEMPRE: al crear el token y otra vez en cada copia.  Ahora el nombre se
+interna una vez por fichero y la ubicacion guarda un puntero.
+
+**Inclusion multiple.**  Una cabecera protegida con `#ifndef` no puede producir
+nada la segunda vez que se incluye.  Sin esto se abria, leia, tokenizaba y
+parseaba entera para que la guarda la dejara inerte: 624 inclusiones para 220
+ficheros distintos, con una cabecera leida 60 veces.  Ahora se reconoce la
+guarda y se sale sin abrir el fichero, siempre que la macro SIGA definida -- un
+`#undef` por medio vuelve a hacer significativo el contenido.
+
+
+
+**Menos reservas y menos disco.**  Un identificador que no es macro -- la
+inmensa mayoria -- se devolvia dentro de un vector de UN elemento, o sea una
+reserva por identificador.  Y del lado del disco: al separar localizar de leer
+se acabo buscando dos veces cada fichero que si se lee, la lista de rutas se
+recorria consultando el sistema de ficheros en cada inclusion aunque la peticion
+fuese identica, el buscador se reconstruia entero cada vez, y se construia un
+preprocesador completo por inclusion que no se usaba para nada.
+**Identidad de una inclusion.**  Lo que se recuerda de un fichero -- su guarda,
+su `#pragma once` -- va indexado por la ruta RESUELTA, no por la escrita.  Un
+`#include "vecino.h"` desde dos directorios distintos nombra dos ficheros
+distintos, y con la ruta escrita lo recordado de uno se aplicaba al otro.  Por
+eso la busqueda separa localizar de leer: hace falta saber CUAL es el fichero
+antes de decidir que no hace falta abrirlo.
+La salida no cambia, salvo que una cabecera ya incluida deja de aportar sus
+lineas en blanco, igual que en gcc.
+## Perfilar
+
+Hay una configuracion `Profile`: **Release CON simbolos**, que es la unica que
+mide el programa que de verdad se ejecuta.
+
+```bash
+cmake -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Profile -B cmake-build-profile
+cmake --build cmake-build-profile -j8
+
+vtune -collect hotspots -r vtune-r001 -- ./cmake-build-profile/vpp.exe <args>
+vtune -report summary  -r vtune-r001
+vtune -report hotspots -r vtune-r001 -group-by source-file
+```
+
+No vale perfilar sobre Debug ni sobre RelWithDebInfo.  Debug dice QUE codigo
+existe, no cuanto pesa: sin meter en linea, cualquier funcion pequena llamada a
+menudo copa la lista y se acaba optimizando lo que no toca.  RelWithDebInfo es
+otro nivel de optimizacion, es decir otro programa, y por tanto otras
+proporciones.  `Profile` parte de los flags de Release y solo anade `-g` y
+`-fno-omit-frame-pointer`; el nivel de optimizacion no se toca, y tampoco se
+estripa al enlazar, porque `--strip-all` borra justo lo que hace falta para
+atribuir cada muestra a una funcion.
+
+Conviene perfilar con la memoria caliente (ver arriba): en frio, lo que se mide
+son los procesos del compilador, no el trabajo de vpp.
 ---
 
 ## Estructura del proyecto
 
 ```
 preprocessor/
-├── CMakeLists.txt           construccion principal
-├── README.md                este archivo
-├── include/
-│   └── preprocessor/
-│       ├── pp_token.h       tokens y SourceLocation
-│       ├── pp_lexer.h       lexer
-│       ├── pp_ast.h         nodos del AST
-│       ├── pp_parser.h      parser
-│       ├── pp_macro.h       tabla, arrays y motor de expansion de macros
-│       ├── pp_evaluator.h   evaluador de expresiones #if
-│       ├── pp_diagnostics.h sistema de errores y advertencias
-│       └── preprocessor.h   clase principal
-├── src/
-│   ├── pp_lexer.cpp
-│   ├── pp_parser.cpp
-│   ├── pp_macro.cpp         incluye registro de macros funcion integradas
-│   ├── pp_evaluator.cpp
-│   ├── pp_diagnostics.cpp
-│   ├── preprocessor.cpp     eval_array_def, eval_exec, eval_set
-│   └── main.cpp             punto de entrada del ejecutable vpp
-├── tests/
-│   ├── CMakeLists.txt
-│   ├── test_lexer.cpp
-│   ├── test_macros.cpp
-│   ├── test_conditionals.cpp
-│   ├── test_includes.cpp
-│   ├── test_metaprog.cpp
-│   ├── test_new_features.cpp
-│   ├── test_variables.cpp   tests de #set
-│   └── test_float_conv.cpp  tests de macros IEEE 754 y conversion
-└── examples/
-    ├── 01_hello_macros.vel       macros basicas y expresiones
-    ├── 02_variables.vel          directiva #set con operadores compuestos
-    ├── 03_arrays_foreach.vel     arrays y bucles #foreach
-    ├── 04_string_macros.vel      macros de cadenas __STRLEN__ .. __TRIM__
-    ├── 05_numeric_macros.vel     macros numericas, bits y conversion de bases
-    ├── 06_float_macros.vel       macros IEEE 754 de punto flotante
-    ├── 07_build_system.vel       vpp como sistema de build con #exec
-    ├── 08_metaprogramming.vel       generacion de tablas con #repeat y #foreach
-    ├── 09_conditional_platform.vel  configuracion portable por plataforma
-    ├── 10_full_program.vel          programa completo: interprete de VM compacto
-    ├── 11_quote_unquote.vel         __QUOTE__ y __UNQUOTE__: tokens <-> cadenas
-    ├── 12_array_join.vel            __ARRAY_JOIN__: listas de texto precalculadas
-    ├── 13_assert.vel                #assert: invariantes de compilacion
-    ├── 14_foreach_index.vel         #foreach VAR, IDX: bucle con indice numerico
-    ├── 15_macro_codegen.vel         #macro...#endmacro: macros multilinea
-    └── 16_vesta_stdlib.vel          uso completo de #import <vesta> y sus modulos
++-- CMakeLists.txt           construccion principal
++-- README.md                este archivo
++-- cmake/                   empaquetado, instalador y listas de simbolos exportados
++-- include/
+|   +-- preprocessor/
+|       +-- pp_token.h        tokens y SourceLocation
+|       +-- pp_lexer.h        lexer
+|       +-- pp_ast.h          nodos del AST
+|       +-- pp_parser.h       parser
+|       +-- pp_macro.h        tabla, arrays y motor de expansion de macros
+|       +-- pp_evaluator.h    evaluador de expresiones #if
+|       +-- pp_include.h      busqueda de #include, #include_next e #import
+|       +-- pp_dialect.h       el marcador de directiva que declara el fichero
+|       +-- pp_deps.h          lista de dependencias en formato de make
+|       +-- pp_name_pool.h     nombres de fichero compartidos entre ubicaciones
+|       +-- pp_capabilities.h consulta al compilador objetivo para __has_*
+|       +-- pp_system.h        entorno y rutas de plataforma
+|       +-- pp_atomic_write.h  escribir un fichero sin que se lea a medias
+|       +-- pp_compiler_id.h   identidad del compilador (clave de la memoria)
+|       +-- pp_facts_cache.h   memoria de respuestas cortas, por compilador
+|       +-- pp_command_cache.h memoria de la salida de un comando
+|       +-- pp_diag_render.h    diagnosticos con la linea y el cursor
+|       +-- pp_source_map.h     texto de cada fuente, para citarlo
+|       +-- pp_diagnostics.h  sistema de errores y advertencias
+|       +-- preprocessor.h    clase principal (API en C++)
+|       +-- vpp_c.h           ABI en C, estable entre compiladores
++-- src/
+|   +-- pp_lexer.cpp
+|   +-- pp_parser.cpp
+|   +-- pp_macro.cpp          incluye registro de macros funcion integradas
+|   +-- pp_evaluator.cpp
+|   +-- pp_include.cpp
+|   +-- pp_deps.cpp
+|   +-- pp_dialect.cpp
+|   +-- pp_name_pool.cpp
+|   +-- pp_capabilities.cpp
+|   +-- pp_system.cpp
+|   +-- pp_atomic_write.cpp
+|   +-- pp_compiler_id.cpp
+|   +-- pp_facts_cache.cpp
+|   +-- pp_command_cache.cpp
+|   +-- pp_diag_render.cpp
+|   +-- pp_source_map.cpp
+|   +-- pp_diagnostics.cpp
+|   +-- preprocessor.cpp      eval_array_def, eval_exec, eval_set
+|   +-- vpp_c.cpp             implementacion del ABI en C
+|   +-- main.cpp              punto de entrada del ejecutable vpp
++-- tests/
+|   +-- CMakeLists.txt
+|   +-- test_lexer.cpp
+|   +-- test_macros.cpp
+|   +-- test_conditionals.cpp
+|   +-- test_includes.cpp
+|   +-- test_metaprog.cpp
+|   +-- test_new_features.cpp
+|   +-- test_variables.cpp        tests de #set
+|   +-- test_float_conv.cpp       tests de macros IEEE 754 y conversion
+|   +-- test_import.cpp           tests de #import
+|   +-- test_c_api.cpp            tests del ABI en C
+|   +-- test_include_search.cpp   tests de la busqueda de inclusiones
+|   +-- test_deps.cpp             tests de la lista de dependencias
+|   +-- test_diag_render.cpp      tests de los diagnosticos con contexto
+|   +-- test_dialect.cpp          tests del marcador de directiva
+|   +-- test_compiler_id.cpp      tests de la identidad del compilador
+|   +-- test_facts_cache.cpp      tests de la memoria entre ejecuciones
+|   +-- check_exports.cmake       la biblioteca compartida solo exporta vpp_*
+|   +-- conformance/              suites contra un compilador de verdad
+|       +-- cases/                corpus de casos del estandar de C
+|       +-- xfail.txt             fallos conocidos (vacio)
+|       +-- run_conformance.cmake
+|       +-- run_system_headers.cmake
++-- examples/
+    +-- 01_hello_macros.vel       macros basicas y expresiones
+    +-- 02_variables.vel          directiva #set con operadores compuestos
+    +-- 03_arrays_foreach.vel     arrays y bucles #foreach
+    +-- 04_string_macros.vel      macros de cadenas __STRLEN__ .. __TRIM__
+    +-- 05_numeric_macros.vel     macros numericas, bits y conversion de bases
+    +-- 06_float_macros.vel       macros IEEE 754 de punto flotante
+    +-- 07_build_system.vel       vpp como sistema de build con #exec
+    +-- 08_metaprogramming.vel       generacion de tablas con #repeat y #foreach
+    +-- 09_conditional_platform.vel  configuracion portable por plataforma
+    +-- 10_full_program.vel          programa completo: interprete de VM compacto
+    +-- 11_quote_unquote.vel         __QUOTE__ y __UNQUOTE__: tokens <-> cadenas
+    +-- 12_array_join.vel            __ARRAY_JOIN__: listas de texto precalculadas
+    +-- 13_assert.vel                #assert: invariantes de compilacion
+    +-- 14_foreach_index.vel         #foreach VAR, IDX: bucle con indice numerico
+    +-- 15_macro_codegen.vel         #macro...#endmacro: macros multilinea
+    +-- 16_vesta_stdlib.vel          uso completo de #import <vesta> y sus modulos
 ```
 
 ---

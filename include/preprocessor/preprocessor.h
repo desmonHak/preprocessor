@@ -9,9 +9,13 @@
 #include "pp_evaluator.h"
 #include "pp_ast.h"
 #include "pp_lexer.h"
+#include "pp_capabilities.h"
+#include "pp_include.h"
+#include "pp_source_map.h"
 #include <string>
 #include <vector>
 #include <unordered_set>
+#include <unordered_map>
 #include <functional>
 
 namespace vpp {
@@ -29,6 +33,31 @@ using IncludeResolver = std::function<
                 bool is_system)>;
 
 /**
+ * @brief De donde sale un conjunto de macros a precargar.
+ */
+enum class PredefKind : uint8_t {
+    Text,    ///< El propio texto de las directivas.
+    File,    ///< Ruta de un fichero que las contiene.
+    Command  ///< Comando cuya salida estandar las contiene.
+};
+
+/**
+ * @brief Un conjunto de macros a precargar antes de procesar el fuente.
+ *
+ * NO es una lista de pares nombre=valor: es TEXTO con directivas, que se
+ * procesa con el pipeline normal y del que solo se conservan las macros.  Esa
+ * decision es lo que hace el mecanismo util de verdad -- un volcado real de
+ * macros predefinidas trae macros funcion (`#define __glibcxx_assert(cond)`) y
+ * valores de varios tokens (`#define __SIZE_TYPE__ long unsigned int`), que no
+ * caben en un nombre=valor -- y ademas lo mantiene independiente del lenguaje:
+ * el fichero es simplemente un fuente de directivas, venga de donde venga.
+ */
+struct PredefSource {
+    PredefKind  kind;   ///< Como interpretar `value`.
+    std::string value;  ///< Texto, ruta o comando, segun `kind`.
+};
+
+/**
  * @brief Opciones de configuracion del preprocesador.
  */
 struct PPOptions {
@@ -37,13 +66,88 @@ struct PPOptions {
     bool                 track_includes;    ///< true para detectar inclusion circular
     std::vector<std::string> include_paths; ///< Rutas de busqueda para #include <...>
     std::vector<std::string> import_paths;  ///< Rutas de busqueda para #import (libreria de macros vpp)
+
+    /**
+     * @brief Rutas declaradas como de sistema (`-isystem`).
+     *
+     * Se recorren DESPUES de include_paths, que es el orden de cc.  Lo que
+     * aparezca en ellas queda marcado como ajeno, y con eso `-MM` puede dejarlo
+     * fuera de la lista de dependencias: rehacer el build porque cambio una
+     * cabecera del sistema no tiene sentido.
+     */
+    std::vector<std::string> system_include_paths;
     std::vector<std::string> predefines;    ///< Macros a predefinir (formato "NAME" o "NAME=val")
+
+    /**
+     * @brief Macros a quitar antes de procesar.
+     *
+     * Se aplican DESPUES de `predefines` y de los conjuntos precargados, que es
+     * para lo que sirven: cancelar algo que trae el volcado del compilador o el
+     * propio vpp.  Ese es el uso que documenta cc para `-U`.
+     *
+     * Con ello, `-DA -UA` deja A sin definir y `-UA -DA` tambien: el orden
+     * relativo entre unas y otras no se conserva.  Escribir ambas sobre el mismo
+     * nombre es raro y ambiguo; lo que si se respeta es lo que se usa.
+     */
+    std::vector<std::string> undefines;
+    /**
+     * @brief Conjuntos de macros a precargar, en orden.
+     *
+     * Sirve para traerse las macros que un compilador concreto predefine.  Se
+     * apunta al BINARIO exacto (`gcc-12 -dM -E -`, `clang-15 -dM -E -x c++ -`)
+     * en lugar de a un nombre de compilador conocido: asi conviven varios
+     * compiladores y varias versiones en la misma maquina sin que vpp tenga que
+     * saber nada de ninguno, y el mecanismo vale igual para un lenguaje que no
+     * sea C.
+     */
+    std::vector<PredefSource> predef_sources;
+
+    /**
+     * @brief Con que preguntar por las capacidades del compilador de destino.
+     *
+     * Los operadores `__has_builtin`, `__has_attribute` y companeros preguntan
+     * por lo que sabe hacer un COMPILADOR, no por una macro, asi que la unica
+     * respuesta honesta es preguntarselo a el.  Aqui va la orden con la que
+     * invocarlo; vpp le anade la ruta de un fichero de consulta.
+     *
+     *     "gcc -E -P -x c"        "clang -E -P -x c++"      "cl /EP"
+     *
+     * Se apunta al binario EXACTO por el mismo motivo que en predef_sources:
+     * en una maquina conviven varios compiladores -- el de MinGW, el de MSVC,
+     * el de WSL -- y cada uno responde distinto a la misma pregunta.
+     *
+     * Vacio significa que no hay a quien preguntar y esos operadores valen 0.
+     */
+    std::string capabilities_command;
+
+    /**
+     * @brief Donde se recuerda entre ejecuciones lo que contesta el compilador.
+     *
+     * Lo que se guarda son hechos sobre un COMPILADOR -- que tenga
+     * `__builtin_expect`, que macros predefine -- no sobre un proyecto, asi que
+     * por omision la memoria es del usuario y se comparte entre todos sus
+     * proyectos en vez de calentarse una vez en cada uno.
+     *
+     * Vacio significa el sitio por omision (ver user_cache_dir); para
+     * desactivarla del todo esta use_cache.
+     */
+    std::string cache_dir;
+
+    /**
+     * @brief Si se recuerda algo entre ejecuciones.
+     *
+     * A false, cada ejecucion vuelve a preguntarle todo al compilador.  Sirve
+     * para medir el coste real de las consultas y para descartar la memoria
+     * cuando se sospecha de ella.
+     */
+    bool                 use_cache;
     bool                 emit_line_markers; ///< Emite marcadores #line tras cada #include
 
     /** @brief Constructor con valores por defecto. */
     PPOptions()
         : expand_macros(true)
         , track_includes(true)
+        , use_cache(true)
         , emit_line_markers(false) {}
 };
 
@@ -107,6 +211,24 @@ public:
     }
 
     /**
+     * @brief Ficheros incluidos que NO vienen de un directorio de sistema.
+     *
+     * Es lo que pide `-MM`: las dependencias que de verdad obligan a rehacer el
+     * build.  Una cabecera del sistema no lo hace -- si esa cambia, se
+     * recompila todo de todas formas.
+     *
+     * @return Las rutas propias, en el orden en que aparecieron.
+     */
+    std::vector<std::string> user_included_files() const;
+
+    /**
+     * @brief Los fuentes leidos, para poder citarlos en un diagnostico.
+     *
+     * @return El almacen de fuentes.
+     */
+    const SourceMap& sources() const noexcept { return m_sources; }
+
+    /**
      * @brief Acceso a las opciones del preprocesador (modificables antes de process).
      * @return Referencia a las opciones.
      */
@@ -146,13 +268,74 @@ public:
      */
     void add_define(const std::string& def);
 
+    /**
+     * @brief Registra un conjunto de macros a precargar.
+     * @param kind  Si `value` es texto, ruta de fichero o comando.
+     * @param value Texto de las directivas, ruta o comando.
+     */
+    void add_predef_source(PredefKind kind, const std::string& value);
+
 private:
     PPOptions          m_opts;          ///< Opciones del preprocesador
     DiagnosticEngine   m_diag;          ///< Motor de diagnosticos
     MacroTable         m_macros;        ///< Tabla de macros activa
     IncludeResolver    m_resolver;      ///< Resolvedor de includes
+
+    /**
+     * @brief Guarda de inclusion de cada fichero que la tiene, por ruta.
+     *
+     * Es la optimizacion de inclusion multiple.  Una cabecera protegida a la
+     * manera clasica
+     *
+     *     #ifndef _GUARDA
+     *     #define _GUARDA
+     *     ...
+     *     #endif
+     *
+     * no puede producir NADA la segunda vez que se incluye, porque su propia
+     * guarda ya esta definida.  Sin esto se abria, leia, tokenizaba y parseaba
+     * entera para que el `#ifndef` la dejara inerte.  Medido sobre una unidad
+     * de C++ real: 624 inclusiones para 220 ficheros distintos, con una
+     * cabecera leida 60 veces.
+     *
+     * `#pragma once` no cubre este caso: las cabeceras del sistema usan la
+     * forma clasica, no el pragma.
+     *
+     * Se anota la guarda al terminar de procesar el fichero y se comprueba
+     * antes de volver a abrirlo.  La comprobacion incluye que la macro SIGA
+     * definida, porque un `#undef` por medio vuelve a hacer significativo el
+     * contenido.
+     */
+    std::unordered_map<std::string, std::string> m_include_guards;
     std::unordered_set<std::string> m_include_guard_once; ///< Archivos con #pragma once
-    std::vector<std::string>        m_include_stack;      ///< Pila de archivos en proceso
+
+    /**
+     * @brief Un fichero de inclusion en curso.
+     *
+     * Guarda la ruta RESUELTA y no la que se escribio en la directiva.  Son
+     * cosas distintas y confundirlas rompe dos casos: un `#include "vecino.h"`
+     * dentro de una cabecera que aparecio por una ruta de busqueda tiene que
+     * buscar al lado de ELLA, y un `#include_next` necesita saber en que
+     * directorio de la lista aparecio la actual para reanudar en el siguiente.
+     */
+    struct IncludeFrame {
+        std::string path;             ///< Ruta con la que se abrio
+        int         search_index = -1; ///< Directorio de la lista donde aparecio,
+                                       ///< o -1 si fue relativo al que incluye
+
+        /**
+         * @brief true si este fichero cuenta como de sistema.
+         *
+         * Lo es si aparecio en un directorio de sistema, o si lo incluyo otro
+         * que ya lo era.  Lo segundo hace falta: una cabecera de sistema tira de
+         * otras por rutas propias, y todas ellas siguen siendo ajenas.  Es la
+         * misma regla que aplica cc para `-MM`.
+         */
+        bool system = false;
+    };
+
+    std::vector<IncludeFrame>       m_include_stack;      ///< Ficheros en curso
+    IncludeSearch                   m_search;             ///< Busqueda de ficheros
     /**
      * @brief TODOS los ficheros incluidos, no solo los que estan en curso.
      *
@@ -164,8 +347,141 @@ private:
      */
     std::vector<std::string>        m_included_files;
 
+    /**
+     * @brief Ficheros incluidos que vienen de un directorio de sistema.
+     *
+     * Va aparte de m_included_files para no cambiar el tipo de lo que ya
+     * devuelve included_files(), que es API publica.
+     */
+    std::unordered_set<std::string> m_system_includes;
+
+    /// Texto de cada fuente leido, para citarlo en los diagnosticos.
+    SourceMap                       m_sources;
+
+    /**
+     * @brief Remapeo de posicion instalado por `#line`.
+     *
+     * `#line N "f"` dice que la linea SIGUIENTE es la N del fichero f.  No se
+     * guarda el desplazamiento sino el par (linea fisica de origen, linea
+     * reportada de origen), y el resto se calcula por diferencia: asi varios
+     * `#line` seguidos componen bien y no hay que arrastrar un acumulado.
+     */
+    bool        m_line_remap_active = false; ///< Hay un #line en vigor
+    uint32_t    m_line_base_phys    = 0;     ///< Linea fisica donde empieza
+    uint32_t    m_line_base_rep     = 0;     ///< Linea reportada equivalente
+    /**
+     * @brief Fichero reportado por `#line`, ya compartido; nulo si no se dio.
+     *
+     * Es un puntero al pozo y no una cadena porque mapped_position se llama por
+     * linea: internar alli tomaria el cerrojo constantemente.  Se interna una
+     * vez, al procesar la directiva.
+     */
+    const std::string* m_line_remap_file = nullptr;
+
+    /**
+     * @brief Traduce una posicion real a la que debe reportarse.
+     * @param real Posicion tal y como esta en el fichero.
+     * @return Posicion despues de aplicar el `#line` en vigor, si lo hay.
+     */
+    SourceLocation mapped_position(const SourceLocation& real) const;
+
+    /**
+     * @brief Quien contesta por el compilador de destino.
+     *
+     * Es un componente aparte, con su propio estado y su propia memoria; el
+     * preprocesador solo le pasa la pregunta.
+     */
+    CapabilityOracle m_capabilities;
+
     // Contadores para macros dinamicas
     uint32_t m_counter; ///< Valor actual de __COUNTER__
+
+    /**
+     * @brief Responde a un operador de prueba de caracteristicas.
+     *
+     * Reparte segun quien sepa la respuesta: `__has_include` lo contesta vpp
+     * con sus propias rutas de busqueda, y el resto va al CapabilityOracle,
+     * que es quien habla con el compilador y recuerda lo que dice.
+     *
+     * @param op  Operador, p.ej. "__has_builtin".
+     * @param arg Texto entre parentesis.
+     * @return 1 o 0; 0 tambien cuando no hay compilador al que preguntar.
+     */
+    int64_t resolve_capability(const std::string& op, const std::string& arg);
+
+    /**
+     * @brief Dice si vpp puede contestar a un operador del compilador.
+     *
+     * No es un detalle.  Las bibliotecas estandar se protegen con
+     *
+     *     #ifndef __has_builtin
+     *     #  define __has_builtin(x) 0
+     *     #endif
+     *
+     * de modo que un preprocesador que no se declare capaz acaba con una macro
+     * que responde 0 a TODO, y con ella las cabeceras se van por ramas que su
+     * compilador no usa.  Asi paso: libc++ moria en un `#error` porque el shim
+     * habia anulado todas las consultas.
+     *
+     * La respuesta no se deduce de la forma del nombre: se PREGUNTA.
+     * `__has_include` lo contesta vpp, porque pregunta por el sistema de
+     * ficheros.  El resto necesita un compilador que ademas LO TENGA -- el
+     * juego de operadores cambia con el lenguaje y con la version -- y sin
+     * compilador la respuesta correcta es que no, porque deja que el shim
+     * instale su 0 y el codigo tome su rama de reserva.
+     *
+     * @param name Identificador tal y como aparece en la directiva.
+     * @return true si vpp puede contestar a ese operador.
+     */
+    bool can_answer_capability(const std::string& name);
+
+    /**
+     * @brief Directorio efectivo de la memoria entre ejecuciones.
+     *
+     * Resuelve las dos formas de no decir nada -- desactivada del todo, o
+     * activada sin decir donde -- en un solo sitio, para que los dos que la
+     * usan no puedan interpretarlas distinto.
+     *
+     * @return La ruta, o vacia si no hay memoria en disco.
+     */
+    std::string effective_cache_dir() const;
+
+    /**
+     * @brief Anota la guarda de inclusion del fichero recien procesado.
+     *
+     * Solo cuenta si TODO el fichero es un unico `#ifndef X` cuyo primer efecto
+     * es `#define X`, y fuera de el no hay mas que blancos.  Cualquier otra
+     * cosa fuera de la guarda seria contenido que si se emite en cada
+     * inclusion, y saltarse el fichero lo perderia.
+     *
+     * @param path  Ruta resuelta del fichero.
+     * @param block Bloque raiz de su AST.
+     */
+    void record_include_guard(const std::string& path, const BlockNode& block);
+
+    /**
+     * @brief Dice si un nombre esta definido a efectos de `#ifdef` y `defined`.
+     *
+     * Une los dos motivos por los que puede estarlo: ser una macro, o ser un
+     * operador de prueba de caracteristicas que vpp sabe contestar.  Existe
+     * para que las dos condiciones se decidan en un solo sitio y no puedan
+     * separarse por descuido en alguno de los usos.
+     *
+     * @param name Identificador tal y como aparece en la directiva.
+     * @return true si esta definido.
+     */
+    bool name_is_defined(const std::string& name);
+
+    /**
+     * @brief Precarga los conjuntos de macros de `predef_sources`.
+     *
+     * Cada uno se procesa como un fuente normal y su salida se descarta: lo que
+     * interesa es el efecto lateral sobre la tabla de macros.  Pasar por el
+     * pipeline completo, en vez de trocear nombre=valor, es lo que permite que
+     * un volcado real -- con macros funcion y valores de varios tokens -- entre
+     * intacto.
+     */
+    void load_predefines();
 
     /**
      * @brief Evalua el AST de un bloque y produce texto de salida.
@@ -271,14 +587,25 @@ private:
      * @param node IncludeNode con la ruta a resolver.
      * @return Contenido del archivo, o cadena vacia si no se encontro.
      */
-    std::string resolve_include(const IncludeNode& node);
+    ResolvedInclude resolve_include(const IncludeNode& node);
 
     /**
-     * @brief Actualiza las macros dinamicas __FILE__, __LINE__, __COUNTER__.
-     * @param file Nombre de archivo actual.
-     * @param line Numero de linea actual.
+     * @brief Averigua CUAL es el fichero de una inclusion, sin leerlo.
+     *
+     * Se necesita antes de decidir si hace falta: la identidad de una inclusion
+     * es su ruta resuelta, no la escrita, y con la escrita lo recordado de un
+     * fichero se aplicaba a otro distinto que se llamaba igual.
+     *
+     * @param node      Nodo de la directiva.
+     * @param path      Ruta ya expandida si venia de macros.
+     * @param is_system true para la forma `<...>`.
+     * @return Donde esta, con `content` vacio; `found` a false si no aparece o
+     *         si la inclusion no pasa por el sistema de ficheros.
      */
-    void update_dynamic_macros(const std::string& file, uint32_t line);
+    ResolvedInclude locate_include(const IncludeNode& node,
+                                   const std::string& path,
+                                   bool is_system);
+
 };
 
 } // namespace vpp

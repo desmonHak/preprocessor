@@ -154,6 +154,43 @@ extern "C" VPP_API vpp_status vpp_add_import_path(vpp_preprocessor* pp,
     }
 }
 
+namespace {
+
+/**
+ * @brief Cuerpo comun de las tres variantes de precarga.
+ * @param pp    Handle.
+ * @param kind  Como interpretar `value`.
+ * @param value Texto, ruta o comando.
+ * @return Codigo de estado del ABI.
+ */
+vpp_status add_predef(vpp_preprocessor* pp, vpp::PredefKind kind,
+                      const char* value) {
+    if (!pp || !value) return VPP_ERR_INVALID_ARG;
+    try {
+        pp->pp.add_predef_source(kind, value);
+        return VPP_OK;
+    } catch (...) {
+        return VPP_ERR_OOM;
+    }
+}
+
+} // namespace
+
+extern "C" VPP_API vpp_status vpp_add_predef_text(vpp_preprocessor* pp,
+                                                  const char* text) {
+    return add_predef(pp, vpp::PredefKind::Text, text);
+}
+
+extern "C" VPP_API vpp_status vpp_add_predef_file(vpp_preprocessor* pp,
+                                                  const char* path) {
+    return add_predef(pp, vpp::PredefKind::File, path);
+}
+
+extern "C" VPP_API vpp_status vpp_add_predef_command(vpp_preprocessor* pp,
+                                                     const char* command) {
+    return add_predef(pp, vpp::PredefKind::Command, command);
+}
+
 extern "C" VPP_API vpp_status vpp_set_expand_macros(vpp_preprocessor* pp,
                                                     int enable) {
     if (!pp) return VPP_ERR_INVALID_ARG;
@@ -309,7 +346,7 @@ extern "C" VPP_API vpp_status vpp_diagnostic_at(const vpp_preprocessor* pp,
     out->level   = to_c_level(d.level);
     // punteros prestados al almacenamiento de los std::string del motor: viven
     // mientras el handle no procese otra unidad ni se destruya
-    out->file    = d.loc.file.c_str();
+    out->file    = d.loc.file().c_str();
     out->line    = d.loc.line;
     out->col     = d.loc.col;
     out->message = d.message.c_str();

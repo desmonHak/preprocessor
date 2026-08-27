@@ -7,6 +7,8 @@
 #include <iostream>
 #include <string>
 #include <unordered_map>
+#include <filesystem>
+#include <fstream>
 
 using namespace vpp;
 
@@ -126,6 +128,133 @@ static void test_include_with_conditional() {
     CHECK(count == 1, "guardia de inclusion manual evita inclusion doble");
 }
 
+
+/**
+ * @brief Un fichero guardado a la manera clasica se procesa una sola vez.
+ *
+ * Es la optimizacion de inclusion multiple: la segunda vez no se abre siquiera,
+ * porque su propia guarda ya esta definida y no podria producir nada.
+ */
+static void test_guarda_clasica_una_sola_vez() {
+    auto pp = make_pp_with_fs({
+        {"g.h", "#ifndef G_H\n#define G_H\nCONTENIDO\n#endif\n"}
+    });
+
+    const std::string out = pp.process(
+        "#include \"g.h\"\n#include \"g.h\"\n#include \"g.h\"\n", "t.c");
+
+    int veces = 0;
+    for (size_t i = out.find("CONTENIDO"); i != std::string::npos;
+         i = out.find("CONTENIDO", i + 1)) ++veces;
+    CHECK(veces == 1, "una cabecera con guarda clasica se procesa una vez");
+}
+
+/**
+ * @brief Lo que esta FUERA de la guarda se emite en cada inclusion.
+ *
+ * Es el limite de la optimizacion, y saltarselo seria perder contenido: el
+ * fichero solo se puede omitir si la guarda lo envuelve TODO.
+ */
+static void test_contenido_fuera_de_la_guarda() {
+    auto pp = make_pp_with_fs({
+        {"f.h", "FUERA\n#ifndef F_H\n#define F_H\nDENTRO\n#endif\n"}
+    });
+
+    const std::string out = pp.process("#include \"f.h\"\n#include \"f.h\"\n",
+                                        "t.c");
+
+    int fuera = 0, dentro = 0;
+    for (size_t i = out.find("FUERA"); i != std::string::npos;
+         i = out.find("FUERA", i + 1)) ++fuera;
+    for (size_t i = out.find("DENTRO"); i != std::string::npos;
+         i = out.find("DENTRO", i + 1)) ++dentro;
+
+    CHECK(fuera == 2, "lo de fuera de la guarda se emite en cada inclusion");
+    CHECK(dentro == 1, "y lo de dentro solo la primera vez");
+}
+
+/**
+ * @brief Un `#undef` de la guarda vuelve a hacer significativo el fichero.
+ *
+ * Sin comprobar que la macro SIGA definida, el fichero se saltaria para siempre
+ * y el contenido no volveria a aparecer.
+ */
+static void test_undef_de_la_guarda() {
+    auto pp = make_pp_with_fs({
+        {"u.h", "#ifndef U_H\n#define U_H\nCUERPO\n#endif\n"}
+    });
+
+    const std::string out = pp.process(
+        "#include \"u.h\"\n#undef U_H\n#include \"u.h\"\n", "t.c");
+
+    int veces = 0;
+    for (size_t i = out.find("CUERPO"); i != std::string::npos;
+         i = out.find("CUERPO", i + 1)) ++veces;
+    CHECK(veces == 2, "tras #undef de la guarda el fichero vuelve a contar");
+}
+
+/**
+ * @brief Una guarda que no define su propio nombre no vale.
+ *
+ * Se veria igual desde fuera -- `#ifndef X` envolviendolo todo -- pero entrar
+ * una segunda vez SI tiene efectos, porque X nunca se define.
+ */
+static void test_guarda_que_no_se_define() {
+    auto pp = make_pp_with_fs({
+        {"n.h", "#ifndef N_H\n#define OTRA_COSA\nCUERPO\n#endif\n"}
+    });
+
+    const std::string out = pp.process("#include \"n.h\"\n#include \"n.h\"\n",
+                                        "t.c");
+
+    int veces = 0;
+    for (size_t i = out.find("CUERPO"); i != std::string::npos;
+         i = out.find("CUERPO", i + 1)) ++veces;
+    CHECK(veces == 2, "una guarda que no define su nombre no se toma por tal");
+}
+
+/**
+ * @brief Dos ficheros distintos que se escriben igual no comparten identidad.
+ *
+ * Es el fallo que destapo el CI de macOS.  `#include "vecino.h"` desde dos
+ * directorios distintos nombra DOS ficheros distintos; si lo recordado se
+ * indexa por la ruta escrita, la guarda de uno se aplica al otro y el segundo
+ * se salta sin haberse leido nunca.  Alli desaparecieron las definiciones de
+ * <runetype.h> y el resultado no compilaba.
+ */
+static void test_identidad_por_ruta_resuelta() {
+    namespace fs = std::filesystem;
+    const fs::path raiz = fs::temp_directory_path() / "vpp_test_ident";
+    fs::remove_all(raiz);
+    fs::create_directories(raiz / "a");
+    fs::create_directories(raiz / "b");
+
+    auto escribir = [](const fs::path& p, const std::string& s) {
+        std::ofstream ofs(p, std::ios::binary);
+        ofs << s;
+    };
+
+    // Mismo nombre, distinto contenido y distinta guarda.
+    escribir(raiz / "a" / "vecino.h",
+             "#ifndef G_A\n#define G_A\nMARCA_A\n#endif\n");
+    escribir(raiz / "b" / "vecino.h",
+             "#ifndef G_B\n#define G_B\nMARCA_B\n#endif\n");
+    // Cada uno lo incluye con la MISMA ruta escrita.
+    escribir(raiz / "a" / "usa.h", "#include \"vecino.h\"\n");
+    escribir(raiz / "b" / "usa.h", "#include \"vecino.h\"\n");
+
+    Preprocessor pp([](const Diagnostic&){});
+pp.options().include_paths.push_back(raiz.string());
+
+    const std::string out = pp.process(
+        "#include \"a/usa.h\"\n#include \"b/usa.h\"\n", "t.c");
+
+    CHECK(contains(out, "MARCA_A"), "se procesa el vecino del primer directorio");
+    CHECK(contains(out, "MARCA_B"), "y tambien el del segundo, que es otro fichero");
+
+    std::error_code ec;
+    fs::remove_all(raiz, ec);
+}
 /* --- main ----------------------------------------------------------------- */
 
 int main() {
@@ -137,6 +266,11 @@ int main() {
     test_pragma_once_prevents_double_include();
     test_nested_include();
     test_include_with_conditional();
+    test_guarda_clasica_una_sola_vez();
+    test_contenido_fuera_de_la_guarda();
+    test_undef_de_la_guarda();
+    test_guarda_que_no_se_define();
+    test_identidad_por_ruta_resuelta();
 
     std::cout << "\nResultados: " << tests_passed << " pasados, "
               << tests_failed  << " fallados\n";

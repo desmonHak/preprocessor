@@ -185,6 +185,58 @@ VPP_API vpp_status vpp_add_include_path(vpp_preprocessor* pp, const char* path);
 VPP_API vpp_status vpp_add_import_path(vpp_preprocessor* pp, const char* path);
 
 /**
+ * @brief Precarga un bloque de directivas dado como texto.
+ *
+ * Sirve para traerse de golpe las macros que predefine un compilador concreto,
+ * pero no esta atado ni a C ni a ningun compilador: el texto es simplemente un
+ * fuente de directivas, y quien lo llama decide de donde sale.
+ *
+ * Se procesa con el pipeline completo y no como una lista de nombre=valor, de
+ * modo que entran intactas las macros funcion y los valores de varios tokens
+ * -- justo lo que trae un volcado real.
+ *
+ * Un `-D` posterior (vpp_add_define) pisa lo que traiga el bloque, por ser mas
+ * especifico.
+ *
+ * @param pp   Handle.
+ * @param text Directivas, terminadas en NUL.
+ * @return VPP_OK o VPP_ERR_INVALID_ARG.
+ */
+VPP_API vpp_status vpp_add_predef_text(vpp_preprocessor* pp, const char* text);
+
+/**
+ * @brief Precarga las directivas contenidas en un fichero.
+ * @param pp   Handle.
+ * @param path Ruta del fichero.
+ * @return VPP_OK o VPP_ERR_INVALID_ARG.  Que el fichero no se pueda leer se
+ *         reporta como diagnostico al procesar, no aqui.
+ */
+VPP_API vpp_status vpp_add_predef_file(vpp_preprocessor* pp, const char* path);
+
+/**
+ * @brief Precarga las directivas que emita un comando por su salida estandar.
+ *
+ * Pensado para apuntar al BINARIO exacto del compilador cuyas macros se
+ * quieren, lo que permite convivir con varias versiones y varios toolchains en
+ * la misma maquina:
+ *
+ * @code
+ *   vpp_add_predef_command(pp, "gcc-12 -dM -E -");
+ *   vpp_add_predef_command(pp, "clang-15 -dM -E -x c++ -");
+ * @endcode
+ *
+ * OJO: esto LANZA UN PROCESO.  Si eso no es aceptable en tu contexto, captura
+ * la salida por tu cuenta y pasala con vpp_add_predef_text, que no toca el
+ * sistema.
+ *
+ * @param pp      Handle.
+ * @param command Linea de ordenes a ejecutar.
+ * @return VPP_OK o VPP_ERR_INVALID_ARG.
+ */
+VPP_API vpp_status vpp_add_predef_command(vpp_preprocessor* pp,
+                                          const char* command);
+
+/**
  * @brief Activa o desactiva la expansion de macros en el texto plano.
  * @param pp     Handle.
  * @param enable 1 para expandir (por defecto), 0 para dejar el texto intacto.

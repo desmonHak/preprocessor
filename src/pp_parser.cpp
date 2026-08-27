@@ -3,7 +3,9 @@
  * @brief Implementacion del parser del preprocesador vpp.
  */
 
+#include <iostream>
 #include "preprocessor/pp_parser.h"
+#include "preprocessor/pp_dialect.h"
 #include <stdexcept>
 #include <sstream>
 
@@ -27,10 +29,48 @@ PPParser::PPParser(std::vector<PPToken> tokens, DiagnosticEngine& diag)
     , m_diag(diag)
 {}
 
+namespace {
+
+/**
+ * @brief Reescribe el operando de `#ifdef`/`#elifdef` como `defined(X)`.
+ *
+ * Las formas por nombre son azucar de las de expresion, asi que se convierten
+ * aqui y de ahi en adelante hay UNA sola manera de evaluar una condicion.  Lo
+ * contrario -- un camino de evaluacion aparte para las que nombran una macro --
+ * duplicaria el manejo del operando y las dos copias se separarian con el
+ * tiempo.
+ *
+ * @param operando Tokens que siguen a la directiva; se espera un identificador.
+ * @param negada   true para la forma `ndef`, que ademas antepone `!`.
+ * @param loc      Ubicacion de la directiva, para los tokens sinteticos.
+ * @return Los tokens de la condicion equivalente.  Si no hay identificador se
+ *         devuelve el operando tal cual, para que el evaluador diagnostique el
+ *         error en su sitio en vez de inventarse una condicion.
+ */
+std::vector<PPToken> como_defined(const std::vector<PPToken>& operando,
+                                  bool negada,
+                                  const SourceLocation& loc) {
+    const PPToken* nombre = nullptr;
+    for (const auto& t : operando) {
+        if (t.type == PPTokenType::IDENT) { nombre = &t; break; }
+        if (t.type != PPTokenType::WHITESPACE &&
+            t.type != PPTokenType::NEWLINE) break;
+    }
+    if (!nombre) return operando;
+
+    std::vector<PPToken> cond;
+    cond.reserve(5);
+    if (negada) cond.emplace_back(PPTokenType::BANG, "!", loc);
+    cond.emplace_back(PPTokenType::IDENT, "defined", loc);
+    cond.emplace_back(PPTokenType::LPAREN, "(", loc);
+    cond.push_back(*nombre);
+    cond.emplace_back(PPTokenType::RPAREN, ")", loc);
+    return cond;
+}
+
+} // namespace
+
 NodePtr PPParser::parse() {
-    SourceLocation root_loc = m_toks.empty()
-        ? SourceLocation()
-        : m_toks[0].loc;
     return parse_block();
 }
 
@@ -53,7 +93,17 @@ PPToken PPParser::consume() {
     if (m_pos >= m_toks.size()) {
         return PPToken(PPTokenType::PP_EOF, "", {});
     }
-    return std::move(m_toks[m_pos++]);
+    // Se devuelve una COPIA, no un `std::move` del elemento del vector.
+    //
+    // Mover dejaba el token vaciado dentro de m_toks, y el parser SI vuelve
+    // atras: para distinguir una directiva de cierre mira hacia delante
+    // consumiendo y despues restaura m_pos.  Al repasar esos tokens ya estaban
+    // gutted, y como el `type` no se mueve pero las cadenas si, el sintoma era
+    // que un token conservaba su tipo y perdia su texto y su ubicacion.  De ahi
+    // que el nodo de #include naciera sin fichero y que
+    // `#include "vecino.h"` no resolviera nunca relativo al fichero que lo
+    // incluye: la ruta base salia de una cadena vacia.
+    return m_toks[m_pos++];
 }
 
 PPToken PPParser::expect(PPTokenType t, const char* msg) {
@@ -108,7 +158,8 @@ NodePtr PPParser::parse_block() {
             if (cur().type == PPTokenType::IDENT) {
                 const std::string& name = cur().value;
                 if (name == "endif"      || name == "else"     ||
-                    name == "elif"       || name == "endforeach"||
+                    name == "elif"       || name == "elifdef"   ||
+                    name == "elifndef"   || name == "endforeach"||
                     name == "endrepeat"  || name == "endmacro") {
                     // restaurar posicion: el padre consumira la directiva
                     m_pos = saved;
@@ -150,21 +201,53 @@ NodePtr PPParser::parse_text_line() {
     SourceLocation l = cur().loc;
     std::vector<PPToken> toks;
 
-    while (!check(PPTokenType::NEWLINE) &&
-           !check(PPTokenType::PP_EOF)  &&
-           !check(PPTokenType::HASH)) {
-        toks.push_back(consume());
+    // Profundidad de parentesis.  Una llamada a macro funcion puede repartirse
+    // en varias lineas -- es habitual en cabeceras reales, p.ej. el __REDIRECT
+    // de glibc:
+    //     extern int __REDIRECT (fscanf, (FILE *__restrict __stream,
+    //                                     const char *__restrict __format, ...),
+    //                            __isoc23_fscanf) ...
+    // Si se cortara el nodo en cada salto de linea, la expansion nunca veria el
+    // parentesis de cierre y la llamada fallaria con "numero incorrecto de
+    // argumentos".  Mientras haya parentesis abiertos se sigue leyendo.
+    int depth = 0;
+
+    for (;;) {
+        while (!check(PPTokenType::NEWLINE) &&
+               !check(PPTokenType::PP_EOF)  &&
+               !check(PPTokenType::HASH)) {
+            if (check(PPTokenType::LPAREN))      ++depth;
+            else if (check(PPTokenType::RPAREN) && depth > 0) --depth;
+            toks.push_back(consume());
+        }
+
+        // consumir el NEWLINE que cierra la linea
+        if (check(PPTokenType::NEWLINE)) {
+            toks.push_back(consume());
+        }
+
+        // Se continua SOLO con parentesis pendientes.  El corte en HASH y en
+        // PP_EOF se mantiene: una directiva dentro de los argumentos de una
+        // macro no esta definida por el estandar, y sin esos frenos un
+        // parentesis que nunca cierra se comeria el resto del fichero.
+        if (depth <= 0 ||
+            check(PPTokenType::PP_EOF) ||
+            check(PPTokenType::HASH)) {
+            break;
+        }
     }
-    // consumir el NEWLINE que cierra la linea
-    if (check(PPTokenType::NEWLINE)) {
-        toks.push_back(consume());
-    }
+
     return std::make_unique<TextNode>(l, std::move(toks));
 }
 
 NodePtr PPParser::parse_directive() {
     SourceLocation hash_loc = cur().loc;
-    consume(); // consume '#'
+    // El marcador se toma del token, no se da por supuesto: puede no ser `#`.
+    // Es lo que hace que el mensaje de una directiva mal escrita en un fichero
+    // con otro dialecto nombre el marcador de VERDAD y no confunda a quien lo
+    // lee.
+    const std::string marcador = cur().value;
+    consume(); // consume el marcador
 
     // saltar espacios opcionales entre '#' y el nombre de directiva
     while (check(PPTokenType::WHITESPACE)) consume();
@@ -187,6 +270,13 @@ NodePtr PPParser::parse_directive() {
     if (dir_name == "define")     return parse_define(hash_loc);
     if (dir_name == "undef")      return parse_undef(hash_loc);
     if (dir_name == "include")    return parse_include(hash_loc);
+    // Misma sintaxis que #include; solo cambia por donde empieza a buscar, y
+    // eso se decide al evaluar.
+    if (dir_name == "include_next") {
+        NodePtr n = parse_include(hash_loc);
+        if (n) static_cast<IncludeNode&>(*n).is_next = true;
+        return n;
+    }
     if (dir_name == "if")         return parse_if_block(hash_loc, IfBlockNode::Kind::IF);
     if (dir_name == "ifdef")      return parse_if_block(hash_loc, IfBlockNode::Kind::IFDEF);
     if (dir_name == "ifndef")     return parse_if_block(hash_loc, IfBlockNode::Kind::IFNDEF);
@@ -203,8 +293,38 @@ NodePtr PPParser::parse_directive() {
     if (dir_name == "assert")     return parse_assert(hash_loc);
     if (dir_name == "macro")      return parse_macro(hash_loc);
 
-    // directiva desconocida
-    m_diag.warning(hash_loc, "directiva de preprocesador desconocida: #" + dir_name);
+    /* La propia declaracion de dialecto.
+     *
+     * Ya se leyo antes de tokenizar -- tiene que ser asi, porque decide con que
+     * marcador se lexa -- de modo que aqui solo hay que consumirla.  Si no se
+     * reconociera, una declaracion escrita como `# vpp:...` en un fichero cuyo
+     * marcador SIGUE siendo `#` se leeria como la directiva `#vpp` y se
+     * quejaria de que no existe.
+     *
+     * Se avisa si aparece demasiado abajo: alli ya no la mira nadie, y un
+     * ajuste que no hace nada en silencio es peor que uno que falla. */
+    if (dir_name == "vpp") {
+        if (hash_loc.line > static_cast<uint32_t>(kDialectHeadLines)) {
+            m_diag.warning(hash_loc,
+                "la declaracion de dialecto solo cuenta en las primeras " +
+                std::to_string(kDialectHeadLines) + " lineas; aqui no hace nada");
+        }
+        consume_rest_of_line();
+        return nullptr;
+    }
+
+    /* Directiva desconocida: es un ERROR, no un aviso.
+     *
+     * El marcador de este fichero es inequivoco -- lo dice el dialecto -- asi
+     * que algo que empieza por el y no es ninguna directiva conocida solo puede
+     * ser una errata.  Antes esto era un aviso Y ademas se tragaba la linea, o
+     * sea lo peor de las dos opciones: la salida quedaba mal y el unico indicio
+     * era un mensaje facil de no leer.  gcc tambien lo trata como error.
+     *
+     * Un lenguaje en el que ese caracter NO marque directivas no llega hasta
+     * aqui: declara su marcador y la linea es texto. */
+    m_diag.error(hash_loc,
+                 "directiva de preprocesador desconocida: " + marcador + dir_name);
     consume_rest_of_line();
     return nullptr;
 }
@@ -324,9 +444,18 @@ NodePtr PPParser::parse_include(SourceLocation hash_loc) {
         is_system = true;
         consume();
     } else {
-        m_diag.error(cur().loc, "#include requiere \"archivo\" o <archivo>");
+        // La ruta no viene escrita literalmente: puede ser una macro que se
+        // expanda a "..." o a <...>, que el estandar admite.  Aqui no se puede
+        // resolver -- el parser no ve la tabla de macros -- asi que se guardan
+        // los tokens y se decide al evaluar.  Si al expandirlos tampoco sale
+        // una ruta, el error se emite alli, con lo que ya se sabe en que
+        // quedaron.
+        auto node = std::make_unique<IncludeNode>(hash_loc, std::string(), false);
+        while (!check(PPTokenType::NEWLINE) && !check(PPTokenType::PP_EOF)) {
+            node->path_tokens.push_back(consume());
+        }
         consume_rest_of_line();
-        return nullptr;
+        return node;
     }
 
     consume_rest_of_line();
@@ -364,10 +493,27 @@ NodePtr PPParser::parse_if_block(SourceLocation hash_loc,
             goto done; // directiva cerrada correctamente
         }
 
-        if (kw == "elif") {
-            consume(); // consume "elif"
+        if (kw == "elif" || kw == "elifdef" || kw == "elifndef") {
+            const bool por_nombre = (kw != "elif");
+            const bool negada     = (kw == "elifndef");
+            const SourceLocation kw_loc = cur().loc;
+            consume(); // consume la palabra clave
             while (check(PPTokenType::WHITESPACE)) consume();
             std::vector<PPToken> elif_cond = consume_rest_of_line();
+
+            /* `#elifdef X` y `#elifndef X` se reescriben a `#elif defined(X)` y
+             * `#elif !defined(X)`.  Asi no hay una segunda forma de evaluar una
+             * condicion: la que ya existe se encarga, y con ella el operador
+             * `defined`, la expansion y los mensajes de error.
+             *
+             * No es solo una comodidad que faltase.  Sin reconocerlas se
+             * avisaba de "directiva desconocida" y se seguia hasta el `#else`,
+             * es decir, se tomaba una rama DISTINTA de la que toma el
+             * compilador, con un aviso que nadie lee. */
+            if (por_nombre) {
+                elif_cond = como_defined(elif_cond, negada, kw_loc);
+            }
+
             NodePtr elif_body = parse_block();
             elif_chain.emplace_back(std::move(elif_cond), false, std::move(elif_body));
             continue;
@@ -838,7 +984,7 @@ NodePtr PPParser::parse_macro(SourceLocation hash_loc) {
     std::string name = cur().value;
     consume();
 
-    // parsear parametros — igual que en parse_define (LPAREN inmediatamente tras el nombre)
+    // parsear parametros -- igual que en parse_define (LPAREN inmediatamente tras el nombre)
     std::vector<std::string> params;
     bool is_variadic = false;
 

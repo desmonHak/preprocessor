@@ -3,6 +3,7 @@
  * @brief Implementacion del lexer del preprocesador vpp.
  */
 
+#include <iostream>
 #include "preprocessor/pp_lexer.h"
 #include <cctype>
 #include <stdexcept>
@@ -61,10 +62,36 @@ const char* pp_token_type_name(PPTokenType t) {
 
 /* --- PPLexer -------------------------------------------------------------- */
 
+// @brief Deja el fuente con finales de linea de un solo caracter.
+//
+// El lexer trata el salto de linea como un token y usa la barra invertida
+// seguida de salto para empalmar lineas.  Con CRLF, el retorno de carro se
+// interponia: no contaba como blanco, rompia el empalme de lineas y se colaba
+// en la salida por duplicado.  Normalizar a la entrada lo arregla de una vez
+// para todo lo que viene despues, en lugar de tener que acordarse del retorno de carro en
+// cada sitio que mire un salto.  Se contempla tambien el CR suelto de los Mac
+// antiguos.
+//
+// @param s Fuente tal y como se leyo.
+// @return El mismo texto con saltos de linea normalizados.
+static std::string normalizar_saltos(std::string s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == 0x0D) {                       // retorno de carro
+            if (i + 1 < s.size() && s[i + 1] == 0x0A) ++i;   // CRLF
+            out += 0x0A;
+        } else {
+            out += s[i];
+        }
+    }
+    return out;
+}
+
 PPLexer::PPLexer(std::string source, std::string filename,
                  DiagnosticEngine& diag, LexerOptions opts)
-    : m_src(std::move(source))
-    , m_file(std::move(filename))
+    : m_src(normalizar_saltos(std::move(source)))
+    , m_file(intern_file_name(filename))
     , m_diag(diag)
     , m_opts(opts)
     , m_pos(0)
@@ -109,13 +136,18 @@ SourceLocation PPLexer::loc() const {
 }
 
 bool PPLexer::is_directive_start() const {
-    // es directiva si estamos en BOL y el proximo caracter no-espacio es '#'
-    // esto permite espacios/tabulaciones antes del '#' (p.ej.: "    #define")
+    // Es directiva si estamos al principio de linea y lo primero que no es
+    // espacio es el marcador.  Se admiten espacios y tabulaciones delante
+    // (p.ej. "    #define"), como en C.
     if (!m_at_bol) return false;
+    const std::string& marca = m_opts.directive_marker;
+    if (marca.empty()) return false;
+
     size_t look = m_pos;
     while (look < m_src.size() && (m_src[look] == ' ' || m_src[look] == '\t'))
         ++look;
-    return look < m_src.size() && m_src[look] == '#';
+    if (look + marca.size() > m_src.size()) return false;
+    return m_src.compare(look, marca.size(), marca) == 0;
 }
 
 /* --- tokenizacion principal ----------------------------------------------- */
@@ -163,17 +195,21 @@ void PPLexer::scan_directive_line(std::vector<PPToken>& out) {
         out.emplace_back(PPTokenType::WHITESPACE, std::move(ws), wl);
     }
 
-    // consumir el '#' de la directiva
+    // consumir el marcador de la directiva
     SourceLocation hash_loc = loc();
-    advance(); // consume '#'
 
-    // verificar si es '##' (pegado de tokens, raro al inicio de linea pero valido)
-    bool is_double = !at_end() && peek() == '#';
+    const std::string& marca = m_opts.directive_marker;
+    for (std::size_t i = 0; i < marca.size(); ++i) advance();
+
+    // Verificar si es '##' (pegado de tokens, raro al inicio de linea pero
+    // valido).  Solo tiene sentido con el marcador de C: con otro, dos
+    // marcadores seguidos no significan nada especial.
+    bool is_double = (marca == "#") && !at_end() && peek() == '#';
     if (is_double) {
         advance();
         out.emplace_back(PPTokenType::HASHHASH, "##", hash_loc);
     } else {
-        out.emplace_back(PPTokenType::HASH, "#", hash_loc);
+        out.emplace_back(PPTokenType::HASH, marca, hash_loc);
     }
 
     // tokenizar el resto de la linea de directiva
@@ -194,18 +230,23 @@ void PPLexer::scan_directive_line(std::vector<PPToken>& out) {
             out.emplace_back(PPTokenType::WHITESPACE, std::move(ws), wl);
             continue;
         }
-        // manejar comentarios de linea
-        if (peek() == '/' && peek(1) == '/' && m_opts.strip_line_comments) {
-            skip_line_comment();
-            break;
-        }
-        // manejar comentarios de bloque
-        if (peek() == '/' && peek(1) == '*' && m_opts.strip_block_comments) {
+        /* El de BLOQUE se mira antes que el de linea.
+         *
+         * En C da igual -- ni `/ *` ni `//` es prefijo del otro -- pero en Lua
+         * el bloque abre con `--[[` y la linea con `--`, asi que al reves la
+         * regla de linea se quedaba con la apertura del bloque y el resto del
+         * comentario salia a la salida como texto, con sus macros expandidas. */
+        if (m_opts.strip_block_comments && matches_ahead(m_opts.block_comment_open)) {
             // Mismas lineas que ocupaba, repuestas (ver scan_text_line).
             const size_t saltos = skip_block_comment();
             for (size_t k = 0; k < saltos; ++k)
                 out.emplace_back(PPTokenType::TEXT, "\n", loc());
             continue;
+        }
+        // manejar comentarios de linea
+        if (m_opts.strip_line_comments && matches_ahead(m_opts.line_comment)) {
+            skip_line_comment();
+            break;
         }
         // escanear el siguiente token no-espacio
         out.push_back(next_directive_token_nosp());
@@ -234,14 +275,9 @@ void PPLexer::scan_text_line(std::vector<PPToken>& out) {
     };
 
     while (!at_end() && peek() != '\n') {
-        // manejar comentarios de linea
-        if (peek() == '/' && peek(1) == '/' && m_opts.strip_line_comments) {
-            flush_text();
-            skip_line_comment();
-            break;
-        }
-        // manejar comentarios de bloque
-        if (peek() == '/' && peek(1) == '*' && m_opts.strip_block_comments) {
+        /* El de BLOQUE se mira antes que el de linea: ver la explicacion en
+         * scan_directive_line.  En Lua `--[[` abre bloque y `--` abre linea. */
+        if (m_opts.strip_block_comments && matches_ahead(m_opts.block_comment_open)) {
             flush_text();
             const size_t saltos = skip_block_comment();
             /* Las lineas que ocupaba el comentario se reponen vacias.  El
@@ -254,6 +290,12 @@ void PPLexer::scan_text_line(std::vector<PPToken>& out) {
             text_start = loc();
             continue;
         }
+        // manejar comentarios de linea
+        if (m_opts.strip_line_comments && matches_ahead(m_opts.line_comment)) {
+            flush_text();
+            skip_line_comment();
+            break;
+        }
         // manejar continuacion de linea
         if (peek() == '\\' && peek(1) == '\n') {
             advance();
@@ -261,22 +303,29 @@ void PPLexer::scan_text_line(std::vector<PPToken>& out) {
             text_buf += ' '; // la continuacion se reemplaza por espacio
             continue;
         }
+        // numeros: tienen que salir como UN token, o el pegado con ## los parte
+        if (std::isdigit((unsigned char)peek()) ||
+            (peek() == '.' && std::isdigit((unsigned char)peek(1)))) {
+            flush_text();
+            out.push_back(scan_pp_number());
+            text_start = loc();
+            continue;
+        }
         // identificadores: candidatos a expansion de macro
         if (std::isalpha((unsigned char)peek()) || peek() == '_') {
             flush_text();
-            SourceLocation id_loc = loc();
             out.push_back(scan_ident());
             text_start = loc();
             continue;
         }
         // literales de cadena: no expandir macros dentro de ellas
-        if (peek() == '"') {
+        if (m_opts.strings && peek() == '"') {
             flush_text();
             out.push_back(scan_string('"'));
             text_start = loc();
             continue;
         }
-        if (peek() == '\'') {
+        if (m_opts.char_literals && peek() == '\'') {
             flush_text();
             out.push_back(scan_string('\''));
             text_start = loc();
@@ -356,7 +405,12 @@ PPToken PPLexer::next_directive_token_nosp() {
         return scan_number();
     }
 
-    // literales de cadena
+    // Literales de cadena.
+    //
+    // Aqui NO se miran `strings` ni `char_literals`: esas opciones hablan del
+    // texto del lenguaje de destino, y dentro de una directiva rige la sintaxis
+    // de vpp.  Apagarlas aqui romperia `#include "fichero.h"` en cuanto alguien
+    // las usara, que es justo el caso para el que existen.
     if (c == '"') {
         return scan_string('"');
     }
@@ -424,6 +478,15 @@ PPToken PPLexer::next_directive_token_nosp() {
     }
 }
 
+/**
+ * @brief Indica si un identificador es prefijo de cadena cruda de C++.
+ * @param s Identificador leido.
+ * @return true si es uno de R, LR, uR, UR o u8R.
+ */
+static bool is_raw_string_prefix(const std::string& s) {
+    return s == "R" || s == "LR" || s == "uR" || s == "UR" || s == "u8R";
+}
+
 PPToken PPLexer::scan_ident() {
     SourceLocation l = loc();
     std::string s;
@@ -431,7 +494,99 @@ PPToken PPLexer::scan_ident() {
            (std::isalnum((unsigned char)peek()) || peek() == '_')) {
         s += advance();
     }
+
+    /* Cadena cruda de C++: R"delim( ... )delim".
+     *
+     * Se atiende AQUI porque el prefijo se lee como un identificador; para
+     * cuando aparece la comilla ya se sabe que viene una cadena cruda, y sin
+     * saberlo el escaneo normal la cierra en la primera comilla que encuentre
+     * dentro.  Con la forma sin delimitador colaba de casualidad; con
+     * delimitador -- que es justo lo que se usa cuando el contenido lleva `)"`
+     * -- partia el literal por la mitad y corrompia el resto de la linea. */
+    if (m_opts.raw_strings && !at_end() && peek() == '"' &&
+        is_raw_string_prefix(s)) {
+        return scan_raw_string(std::move(s), l);
+    }
+
     return PPToken(PPTokenType::IDENT, std::move(s), l);
+}
+
+PPToken PPLexer::scan_raw_string(std::string s, const SourceLocation& l) {
+    s += advance();   // la comilla de apertura
+
+    // El delimitador va entre la comilla y el parentesis.  El estandar lo
+    // limita a 16 caracteres y excluye espacios, parentesis y la barra.
+    std::string delim;
+    while (!at_end() && peek() != '(') {
+        const char c = peek();
+        if (c == ')' || c == '\\' || c == '"' ||
+            std::isspace((unsigned char)c) || delim.size() >= 16) {
+            break;
+        }
+        delim += c;
+        s += advance();
+    }
+
+    if (at_end() || peek() != '(') {
+        m_diag.error(l, "delimitador de cadena cruda mal formado");
+        return PPToken(PPTokenType::STRING, std::move(s), l);
+    }
+    s += advance();   // '('
+
+    // Dentro NO hay escapes: la unica forma de terminar es la secuencia de
+    // cierre exacta.  Por eso el delimitador existe -- deja escribir `)"` en el
+    // contenido sin que cierre nada.
+    const std::string cierre = ")" + delim + "\"";
+    for (;;) {
+        if (at_end()) {
+            m_diag.error(l, "cadena cruda sin cerrar");
+            return PPToken(PPTokenType::STRING, std::move(s), l);
+        }
+        if (peek() == ')') {
+            bool coincide = true;
+            for (std::size_t i = 0; i < cierre.size(); ++i) {
+                if (peek(static_cast<int>(i)) != cierre[i]) { coincide = false; break; }
+            }
+            if (coincide) {
+                for (std::size_t i = 0; i < cierre.size(); ++i) s += advance();
+                return PPToken(PPTokenType::STRING, std::move(s), l);
+            }
+        }
+        s += advance();
+    }
+}
+
+PPToken PPLexer::scan_pp_number() {
+    SourceLocation l = loc();
+    std::string s;
+
+    // Regla de "numero de preprocesado" del estandar de C: empieza por digito
+    // (o por punto seguido de digito) y a partir de ahi absorbe digitos,
+    // letras, guiones bajos, puntos y el signo que sigue a e/E/p/P.
+    //
+    // Es mas amplia que "un numero" a proposito: 200112L, 1.5e-9 y hasta 0x1p+3
+    // son UN token.  Partirlos rompe el pegado con ##, que junta el ultimo
+    // token de un lado con el PRIMERO del otro: con `200112L` partido en
+    // `200112` y `L`, un `___X_##v` producia `___X_200112` mas una `L` suelta,
+    // y el resultado ya no coincidia con ninguna macro.  Es lo que impedia
+    // preprocesar las cabeceras del SDK de macOS.
+    if (peek() == '.') s += advance();
+    while (!at_end()) {
+        const char c = peek();
+        if (std::isdigit(static_cast<unsigned char>(c)) ||
+            std::isalpha(static_cast<unsigned char>(c)) ||
+            c == '_' || c == '.') {
+            // el signo solo cuenta si viene detras de un exponente
+            const bool exp = (c == 'e' || c == 'E' || c == 'p' || c == 'P');
+            s += advance();
+            if (exp && !at_end() && (peek() == '+' || peek() == '-')) {
+                s += advance();
+            }
+            continue;
+        }
+        break;
+    }
+    return PPToken(PPTokenType::NUMBER, std::move(s), l);
 }
 
 PPToken PPLexer::scan_number() {
@@ -523,6 +678,21 @@ PPToken PPLexer::scan_angle_string() {
     return PPToken(PPTokenType::ANGLE_STRING, std::move(s), l);
 }
 
+
+/**
+ * @brief Indica si en la posicion actual empieza la secuencia dada.
+ *
+ * Existe porque las secuencias de comentario dejaron de ser dos caracteres
+ * fijos: pueden tener uno (`;` de Lisp) o cuatro (`--[[` de Lua).
+ *
+ * @param s Secuencia a comparar; vacia nunca casa.
+ * @return true si el texto que viene empieza por ella.
+ */
+bool PPLexer::matches_ahead(const std::string& s) const {
+    if (s.empty()) return false;
+    if (m_pos + s.size() > m_src.size()) return false;
+    return m_src.compare(m_pos, s.size(), s) == 0;
+}
 void PPLexer::skip_line_comment() {
     // avanza hasta el fin de la linea sin consumir el '\n'
     while (!at_end() && peek() != '\n') {
@@ -542,12 +712,17 @@ void PPLexer::skip_line_comment() {
 size_t PPLexer::skip_block_comment() {
     SourceLocation start = loc();
     size_t saltos = 0;
-    advance(); // consume '/'
-    advance(); // consume '*'
+
+    // Las secuencias son las del dialecto: `/ *` y `* /` en C, `--[[` y `]]` en
+    // Lua.  Pueden tener otra longitud, asi que se consumen por su tamano en vez
+    // de dar por hecho dos caracteres.
+    const std::string& abre  = m_opts.block_comment_open;
+    const std::string& cierra = m_opts.block_comment_close;
+    for (std::size_t i = 0; i < abre.size(); ++i) advance();
+
     while (!at_end()) {
-        if (peek() == '*' && peek(1) == '/') {
-            advance(); // '*'
-            advance(); // '/'
+        if (matches_ahead(cierra)) {
+            for (std::size_t i = 0; i < cierra.size(); ++i) advance();
             return saltos;
         }
         if (peek() == '\n') ++saltos;

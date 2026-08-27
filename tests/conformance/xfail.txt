@@ -1,0 +1,45 @@
+# Casos de conformidad que hoy NO pasan.
+#
+# Un caso listado aqui puede fallar sin romper la suite.  Si empieza a pasar se
+# reporta como XPASS y SI la rompe, para obligar a quitarlo de esta lista: asi
+# el fichero no se queda mintiendo sobre el estado real.
+#
+# Cada entrada dice QUE falla, para que se pueda priorizar sin volver a
+# investigar desde cero.
+
+# --- `defined` -- ARREGLADO ---------------------------------------------------
+# Era CRITICO: el operando se expandia antes de evaluar el operador, asi que
+# `defined(A)` con A definida acababa siendo `defined(1)`.  Resuelto moviendo la
+# resolucion de `defined` ANTES de la expansion (resolve_defined en
+# pp_evaluator.cpp), que es el orden que exige el estandar.
+
+# --- stringify (#) -- ARREGLADO ----------------------------------------------
+# Tres defectos, los tres cerrados: conserva un espacio entre tokens
+# (tokens_raw), escapa comillas y barras de los literales
+# (escape_for_stringify), y expande el argumento antes de sustituirlo salvo
+# cuando es operando de # o ##, con lo que el idioma XSTR(x)/STR(x) funciona.
+
+# --- pegado (##) con operandos vacios -- ARREGLADO ---------------------------
+# Se daba por hecho que siempre habia un token a cada lado del operador, y al no
+# encontrarlo se dejaba el `##` literal en la salida: CAT(,) daba "## ".  Ahora
+# un operando vacio produce simplemente el otro operando.
+
+# --- variadicas -- PARCIALMENTE ARREGLADO ------------------------------------
+# Arreglada la coma sobrante de __VA_ARGS__: el troceado de argumentos usaba
+# `params.size() - 1`, y como `params` no incluye el `...`, con `L(a, ...)` no
+# troceaba nunca y con `M(...)` funcionaba de milagro por el underflow a
+# SIZE_MAX.
+
+# __VA_OPT__ (C23 / C++20) implementado: emite su contenido solo si la parte
+# variadica trae algun token.  Es la forma estandar de evitar la coma colgante
+# de `LOG(fmt, ...)` llamado sin variadicos.
+
+# --- expresiones #if -- ARREGLADO --------------------------------------------
+# Las constantes de caracter no se aceptaban y abortaban el fichero entero.
+# char_literal_value las resuelve por codigo en pp_evaluator.cpp.
+
+# --- DIVERGENCIA DELIBERADA, ya no se marca ----------------------------------
+# C sustituye un comentario por UN espacio; vpp conserva sus saltos de linea a
+# proposito (commit f40ac33) para no descuadrar la numeracion de las etapas
+# siguientes.  Desde que la comparacion es por TOKENS y no por lineas, esa
+# diferencia ya no cuenta como fallo: los tokens son los mismos.

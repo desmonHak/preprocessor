@@ -37,7 +37,7 @@ enum class NodeKind : uint8_t {
     EXEC_DIR,       ///< Directiva #exec: ejecuta un comando del sistema
     SET_DIR,        ///< Directiva #set: asigna o modifica una variable
     ASSERT_DIR,     ///< Directiva #assert: comprueba una condicion en preprocesado
-    MACRO_BLOCK     ///< Bloque #macro ... #endmacro: macro funcion multilínea
+    MACRO_BLOCK     ///< Bloque #macro ... #endmacro: macro funcion multilinea
 };
 
 /* --- clase base ----------------------------------------------------------- */
@@ -157,6 +157,27 @@ struct IncludeNode : ASTNode {
     std::string path;        ///< Ruta del archivo a incluir
     bool        is_system;   ///< true si es <path>, false si es "path"
     bool        is_import;   ///< true si es #import (semantica auto-once + import_paths)
+
+    /**
+     * @brief true si es `#include_next`.
+     *
+     * Reanuda la busqueda DESPUES del directorio en el que aparecio el fichero
+     * que la escribe, en vez de empezar por el principio.  Es como una
+     * biblioteca superpone su propia cabecera sobre la del sistema con el mismo
+     * nombre: libstdc++ hace justo eso para envolver el <stdlib.h> de C desde
+     * su <cstdlib>.
+     */
+    bool        is_next = false;
+
+    /**
+     * @brief Tokens de la ruta cuando hay que expandir macros para conocerla.
+     *
+     * `#include CABECERA` es valido en C: los tokens que siguen se expanden y
+     * el resultado debe formar "..." o <...>.  El parser no puede resolverlo
+     * porque no ve la tabla de macros, asi que los guarda aqui y la decision se
+     * aplaza a la evaluacion.  Vacio cuando la ruta venia escrita literalmente.
+     */
+    std::vector<PPToken> path_tokens;
 
     /**
      * @brief Constructor.

@@ -1,0 +1,157 @@
+# CI de vpp.
+#
+# Compila y pasa la suite completa en las plataformas que importan.  La matriz
+# no es simetrica por capricho: cada entrada cubre algo que las demas no.
+#
+#   - ubuntu   : ELF, glibc, y el version script que recorta los simbolos
+#   - macos    : Mach-O y su lista de simbolos exportados, que es la parte del
+#                empaquetado que NADIE ha podido probar a mano por no tener Mac
+#   - msvc     : la rama MSVC del CMake y su forma de nombrar las bibliotecas
+#   - mingw    : el toolchain con el que se construye de verdad en Windows
+#
+# La suite de conformidad necesita un compilador de referencia (gcc/clang) y se
+# omite sola si no lo encuentra, asi que ninguna entrada de la matriz falla por
+# no tenerlo.
+
+name: CI
+
+on:
+  push:
+    branches: [master, develop]
+  pull_request:
+    branches: [master, develop]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.nombre }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # No se cancela el resto al primer fallo: interesa saber si algo se rompe
+      # en UNA plataforma o en todas, que son diagnosticos distintos.
+      fail-fast: false
+      matrix:
+        include:
+          - nombre: linux-gcc
+            os: ubuntu-latest
+            generador: "Unix Makefiles"
+          - nombre: macos-clang
+            os: macos-latest
+            generador: "Unix Makefiles"
+          - nombre: windows-msvc
+            os: windows-latest
+            generador: ""          # el que traiga por defecto: MSVC
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.generador }}" ]; then
+            cmake -S . -B build -G "${{ matrix.generador }}" -DCMAKE_BUILD_TYPE=Release
+          else
+            cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          fi
+
+      - name: Compilar
+        run: cmake --build build --config Release --parallel
+
+      - name: Tests
+        working-directory: build
+        run: ctest --build-config Release --output-on-failure
+
+      - name: Instalar
+        shell: bash
+        run: cmake --install build --config Release --prefix "$PWD/etapa"
+
+      - name: Comprobar el arbol instalado
+        shell: bash
+        run: |
+          # No basta con que instale: tiene que dejar lo necesario para
+          # compilar contra la biblioteca, que es la mitad del objetivo.
+          for f in include/preprocessor/vpp_c.h \
+                   include/preprocessor/preprocessor.h; do
+            test -f "etapa/$f" || { echo "falta $f"; exit 1; }
+          done
+          find etapa -name 'vppConfig.cmake' | grep -q . \
+            || { echo "falta el paquete de CMake"; exit 1; }
+          echo "arbol instalado correcto"
+
+  mingw:
+    name: windows-mingw
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+
+      - name: Configurar, compilar y probar
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+          cd build && ctest --output-on-failure
+
+  consumidor:
+    name: consumidor-externo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compilar e instalar
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+          cmake --install build --prefix "$PWD/etapa"
+
+      - name: Enlazar desde un proyecto en C puro
+        run: |
+          # Este trabajo comprueba el objetivo del ABI en C: que un proyecto que
+          # no tiene NADA de C++ -- ni siquiera el lenguaje habilitado -- pueda
+          # consumir la biblioteca.  Compilar el propio vpp no demuestra eso.
+          mkdir -p /tmp/consumidor && cd /tmp/consumidor
+          cat > uso.c <<'FIN'
+          #include <preprocessor/vpp_c.h>
+          #include <stdio.h>
+          #include <string.h>
+          int main(void) {
+              vpp_preprocessor* pp = vpp_create();
+              char* out = NULL;
+              vpp_add_define(pp, "N=7");
+              vpp_status st = vpp_process(
+                  pp, "#define D(x) ((x)*2)\nr = D(N)\n", "u.c", &out);
+              if (st != VPP_OK || !out) { puts("fallo al procesar"); return 1; }
+              if (!strstr(out, "((7)*2)")) { printf("inesperado: %s", out); return 1; }
+              vpp_string_free(out);
+              vpp_destroy(pp);
+              puts("ok");
+              return 0;
+          }
+          FIN
+          cat > CMakeLists.txt <<'FIN'
+          cmake_minimum_required(VERSION 3.16)
+          project(consumidor LANGUAGES C)
+          find_package(vpp REQUIRED)
+          add_executable(uso uso.c)
+          target_link_libraries(uso PRIVATE vpp::vpp)
+          FIN
+          cmake -S . -B b -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/etapa"
+          cmake --build b
+          LD_LIBRARY_PATH="$GITHUB_WORKSPACE/etapa/lib" ./b/uso
+
+      - name: pkg-config, sin CMake por medio
+        run: |
+          cd /tmp/consumidor
+          export PKG_CONFIG_PATH="$GITHUB_WORKSPACE/etapa/lib/pkgconfig"
+          gcc uso.c $(pkg-config --cflags --libs vpp) -o uso_pc
+          LD_LIBRARY_PATH="$GITHUB_WORKSPACE/etapa/lib" ./uso_pc

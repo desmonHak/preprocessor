@@ -17,6 +17,15 @@
  */
 
 #include "preprocessor/preprocessor.h"
+#include "preprocessor/pp_deps.h"
+#include "preprocessor/pp_diag_render.h"
+
+#include <cstdlib>
+#ifdef _WIN32
+    #include <io.h>
+#else
+    #include <unistd.h>
+#endif
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -36,7 +45,30 @@ static void print_help(const char* prog) {
         << "  -o <archivo>      Archivo de salida (por defecto: stdout)\n"
         << "  -D NAME[=val]     Define una macro antes de procesar\n"
         << "  -I <ruta>         Anade ruta de busqueda para #include <...>\n"
+        << "  -U NAME           Quita una macro (tambien -UNAME)\n"
+        << "  -isystem <ruta>   Ruta de sistema: se busca despues de las -I y\n"
+        << "                    lo que aparezca en ella queda fuera de -MM\n"
         << "  -M <ruta>         Anade ruta de busqueda para #import <...>\n"
+        << "  --predef <f>      Precarga las directivas de un fichero\n"
+        << "  --predef-from <c> Precarga las directivas que emita un comando,\n"
+        << "                    p.ej. --predef-from \"gcc -dM -E -\"\n"
+        << "  --capabilities-from <c>\n"
+        << "                    Con que resolver __has_builtin y companeros,\n"
+        << "                    p.ej. --capabilities-from \"gcc -E -P -x c\"\n"
+        << "  --cache-dir <d>   Donde recordar lo que contesta el compilador\n"
+        << "                    (por omision, la cache del usuario)\n"
+        << "  --no-cache        No recuerda nada entre ejecuciones\n"
+        << "  --deps            Emite la lista de dependencias en formato make\n"
+        << "                    en lugar de la salida (el -M de cc, que aqui ya\n"
+        << "                    significa ruta de #import)\n"
+        << "  -MD               Emite las dependencias ADEMAS de la salida\n"
+        << "  -MM               Como --deps, sin las cabeceras de sistema\n"
+        << "  -MMD              Como -MD, sin las cabeceras de sistema\n"
+        << "  -MF <f>           Escribe las dependencias en ese fichero\n"
+        << "  -MT <t>           Nombre del objetivo de la regla\n"
+        << "  -MP               Anade una regla vacia por dependencia\n"
+        << "  --marker <s>      Que marca una directiva (por omision '#');\n"
+        << "                    el fichero puede decirlo con 'vpp:marker=s'\n"
         << "  --line-markers    Emite marcadores #line tras cada #include\n"
         << "  --no-expand       Desactiva la expansion de macros en texto\n"
         << "  --stdin           Lee el fuente de la entrada estandar\n"
@@ -95,12 +127,42 @@ static void add_auto_stdlib(std::vector<std::string>& import_paths, const char* 
     } catch (...) {}
 }
 
+
+/**
+ * @brief Decide si conviene resaltar la salida de error.
+ *
+ * Solo si va a una terminal.  Redirigida a un fichero o a otro programa, las
+ * secuencias ANSI son basura que ensucia lo que despues alguien tiene que leer
+ * o parsear.  Se respeta ademas NO_COLOR, que es la convencion para apagarlo.
+ *
+ * @return true si se debe colorear.
+ */
+static bool salida_con_color() {
+    if (std::getenv("NO_COLOR") != nullptr) return false;
+#ifdef _WIN32
+    return _isatty(_fileno(stderr)) != 0;
+#else
+    return isatty(fileno(stderr)) != 0;
+#endif
+}
 int main(int argc, char* argv[]) {
     // --- parsear argumentos de la linea de comandos ---
     std::string input_file;
     std::string output_file;
     std::vector<std::string> defines;
+    std::vector<vpp::PredefSource> predef_sources;
+    std::string capabilities_cmd;
+    std::string cache_dir;
+    std::string marker;
+    bool        emitir_deps = false;
+    bool        solo_deps   = false;
+    bool        deps_sin_sistema = false;
+    std::string deps_file;
+    vpp::DepsOptions deps_opts;
+    bool        use_cache = true;
     std::vector<std::string> include_paths;
+    std::vector<std::string> system_include_paths;
+    std::vector<std::string> undefines;
     std::vector<std::string> import_paths;
     bool line_markers = false;
     bool no_expand    = false;
@@ -138,12 +200,73 @@ int main(int argc, char* argv[]) {
             }
             continue;
         }
+        // Ruta de sistema: se busca DESPUES de las propias, y lo que aparezca
+        // en ella queda marcado como ajeno para `-MM`.
+        if (std::strcmp(argv[i], "-isystem") == 0 && i + 1 < argc) {
+            system_include_paths.push_back(argv[++i]);
+            continue;
+        }
+        // Quitar una macro.  Se admite `-U NAME` y `-UNAME`, como cc.
+        if (std::strncmp(argv[i], "-U", 2) == 0) {
+            if (argv[i][2] != '\0') {
+                undefines.push_back(argv[i] + 2);
+            } else if (i + 1 < argc) {
+                undefines.push_back(argv[++i]);
+            }
+            continue;
+        }
         if (std::strncmp(argv[i], "-I", 2) == 0) {
             if (argv[i][2] != '\0') {
                 include_paths.push_back(argv[i] + 2);
             } else if (i + 1 < argc) {
                 include_paths.push_back(argv[++i]);
             }
+            continue;
+        }
+        /* --- dependencias para el build ---
+         *
+         * Se miran ANTES que `-M`, que en vpp es una ruta de busqueda para
+         * `#import` y ademas casa por PREFIJO: sin esto se tragaria `-MD`,
+         * `-MF` y compania como si fueran rutas.  Al exigir coincidencia exacta
+         * aqui, una ruta escrita `-MDocs` sigue funcionando como siempre; solo
+         * chocaria una que se llamase exactamente D, F, T o P.
+         *
+         * Los nombres son los de cc para que un build system los emita tal
+         * cual.  El unico que no se puede reusar es el `-M` a secas, que ya
+         * estaba cogido; su equivalente es `--deps`. */
+        if (std::strcmp(argv[i], "--deps") == 0) {
+            emitir_deps = true;
+            solo_deps   = true;
+            continue;
+        }
+        if (std::strcmp(argv[i], "-MM") == 0) {
+            emitir_deps  = true;
+            solo_deps    = true;
+            deps_sin_sistema = true;
+            continue;
+        }
+        if (std::strcmp(argv[i], "-MMD") == 0) {
+            emitir_deps      = true;
+            deps_sin_sistema = true;
+            continue;
+        }
+        if (std::strcmp(argv[i], "-MD") == 0) {
+            emitir_deps = true;
+            continue;
+        }
+        if (std::strcmp(argv[i], "-MF") == 0 && i + 1 < argc) {
+            deps_file   = argv[++i];
+            emitir_deps = true;
+            continue;
+        }
+        if (std::strcmp(argv[i], "-MT") == 0 && i + 1 < argc) {
+            deps_opts.target = argv[++i];
+            emitir_deps      = true;
+            continue;
+        }
+        if (std::strcmp(argv[i], "-MP") == 0) {
+            deps_opts.phony_targets = true;
+            emitir_deps             = true;
             continue;
         }
         if (std::strncmp(argv[i], "-M", 2) == 0) {
@@ -155,6 +278,57 @@ int main(int argc, char* argv[]) {
             }
             continue;
         }
+        // Precarga de macros desde un fichero de directivas.  Es generico: no
+        // sabe nada de compiladores ni de lenguajes, solo dice "carga estas
+        // directivas antes de empezar".
+        if (std::strcmp(argv[i], "--predef") == 0 && i + 1 < argc) {
+            predef_sources.push_back(
+                vpp::PredefSource{vpp::PredefKind::File, argv[++i]});
+            continue;
+        }
+
+        // Con que preguntar por las capacidades del compilador de destino
+        // (__has_builtin y companeros).  Se apunta al binario EXACTO por el
+        // mismo motivo que en --predef-from: en una maquina conviven varios
+        // compiladores y cada uno responde distinto a la misma pregunta.
+        if (std::strcmp(argv[i], "--capabilities-from") == 0 && i + 1 < argc) {
+            capabilities_cmd = argv[++i];
+            continue;
+        }
+
+        // Donde recordar entre ejecuciones lo que contesta el compilador.  Por
+        // omision es la cache del usuario, porque lo que se guarda son hechos
+        // sobre un COMPILADOR y valen igual en todos sus proyectos; se cambia
+        // aqui cuando la compilacion tiene que ser reproducible o aislada.
+        if (std::strcmp(argv[i], "--cache-dir") == 0 && i + 1 < argc) {
+            cache_dir = argv[++i];
+            continue;
+        }
+
+
+        // Marcador de directiva para ficheros que no se pueden tocar --
+        // generados, o de terceros -- donde no hay donde poner la declaracion.
+        // Si el fichero SI la trae, gana la suya por ser mas concreta.
+        if (std::strcmp(argv[i], "--marker") == 0 && i + 1 < argc) {
+            marker = argv[++i];
+            continue;
+        }
+        if (std::strcmp(argv[i], "--no-cache") == 0) {
+            use_cache = false;
+            continue;
+        }
+
+        // Precarga desde la salida de un comando.  Se apunta al BINARIO exacto
+        // en lugar de a un nombre de compilador conocido, de modo que conviven
+        // varias versiones y varios toolchains en la misma maquina:
+        //     --predef-from "gcc-12 -dM -E -"
+        //     --predef-from "clang-15 -dM -E -x c++ -"
+        if (std::strcmp(argv[i], "--predef-from") == 0 && i + 1 < argc) {
+            predef_sources.push_back(
+                vpp::PredefSource{vpp::PredefKind::Command, argv[++i]});
+            continue;
+        }
+
         if (std::strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             output_file = argv[++i];
             continue;
@@ -175,8 +349,16 @@ int main(int argc, char* argv[]) {
 
     // --- configurar el preprocesador ---
     bool had_error = false;
-    vpp::Preprocessor pp([&had_error](const vpp::Diagnostic& d) {
-        std::cerr << d.format() << '\n';
+    /* El diagnostico se guarda y se imprime al final, no aqui.
+     *
+     * Para citar la linea culpable hace falta el fuente, y el preprocesador
+     * todavia lo esta leyendo cuando emite el mensaje.  Guardarlos y sacarlos
+     * despues es lo que permite ensenar el contexto; y de paso salen en orden
+     * aunque la salida vaya al mismo sitio. */
+    const bool usar_color = salida_con_color();
+    std::vector<vpp::Diagnostic> diagnosticos;
+    vpp::Preprocessor pp([&had_error, &diagnosticos](const vpp::Diagnostic& d) {
+        diagnosticos.push_back(d);
         if (d.level >= vpp::DiagLevel::ERR) had_error = true;
     });
 
@@ -187,8 +369,15 @@ int main(int argc, char* argv[]) {
     opts.emit_line_markers = line_markers;
     opts.expand_macros     = !no_expand;
     opts.include_paths     = include_paths;
+    opts.system_include_paths = system_include_paths;
+    opts.undefines            = undefines;
     opts.import_paths      = import_paths;
     opts.predefines        = defines;
+    opts.predef_sources    = predef_sources;
+    opts.capabilities_command = capabilities_cmd;
+    opts.cache_dir            = cache_dir;
+    if (!marker.empty()) opts.lexer.directive_marker = marker;
+    opts.use_cache            = use_cache;
 
     // --- leer el fuente ---
     std::string source;
@@ -212,14 +401,46 @@ int main(int argc, char* argv[]) {
     // --- procesar ---
     std::string result = pp.process(source, filename);
 
+    /* Ahora si se imprimen: los fuentes ya estan leidos y cada mensaje puede
+     * citar su linea.  Va ANTES de rendirse por los errores, que si no los
+     * mensajes que explican el fallo no llegarian a verse. */
+    for (const auto& d : diagnosticos) {
+        std::cerr << vpp::render_diagnostic(d, pp.sources(), usar_color) << '\n';
+    }
+
     if (had_error) {
         std::cerr << "vpp: preprocesamiento fallido con "
                   << pp.diagnostics().error_count() << " error(es)\n";
         return 1;
     }
+    // --- lista de dependencias ---
+    //
+    // Se escribe antes que la salida para que, con `-M`, lo que llegue a stdout
+    // sea SOLO la regla: es lo que espera quien la canaliza a un fichero.
+    if (emitir_deps) {
+        const std::string regla = vpp::format_make_deps(
+            output_file, input_file,
+            deps_sin_sistema ? pp.user_included_files() : pp.included_files(),
+            deps_opts);
+
+        if (deps_file.empty()) {
+            std::cout << regla;
+        } else {
+            std::ofstream dfs(deps_file, std::ios::binary);
+            if (!dfs) {
+                std::cerr << "vpp: no se puede crear el fichero de "
+                             "dependencias: " << deps_file << '\n';
+                return 1;
+            }
+            dfs << regla;
+        }
+    }
 
     // --- escribir la salida ---
-    if (output_file.empty()) {
+//    // Con `-M` no hay salida: lo unico que se pide es la regla.  Es asi en cc    // y es lo que hace que se pueda canalizar sin filtrar nada.
+    if (solo_deps) {
+        // nada que emitir
+    } else if (output_file.empty()) {
         std::cout << result;
     } else {
         std::ofstream ofs(output_file, std::ios::binary);
