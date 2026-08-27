@@ -579,6 +579,24 @@ private:
      * @param loc    Ubicacion de la directiva para errores.
      * @return true si la condicion es verdadera (distinta de 0).
      */
+    /**
+     * @brief Evalua una expresion y devuelve su VALOR.
+     * @param tokens Tokens de la expresion.
+     * @param loc    Ubicacion, para los mensajes.
+     * @return El valor entero.
+     */
+    int64_t eval_int(const std::vector<PPToken>& tokens,
+                     const SourceLocation& loc);
+
+    /**
+     * @brief Expande unos tokens y los devuelve como texto.
+     * @param tokens Tokens a expandir.
+     * @param loc    Ubicacion, para __FILE__ y __LINE__.
+     * @return El texto resultante.
+     */
+    std::string expand_to_text(const std::vector<PPToken>& tokens,
+                               const SourceLocation& loc);
+
     bool eval_condition(const std::vector<PPToken>& tokens,
                         const SourceLocation& loc);
 
@@ -588,6 +606,13 @@ private:
      * @return Contenido del archivo, o cadena vacia si no se encontro.
      */
     ResolvedInclude resolve_include(const IncludeNode& node);
+
+    /**
+     * @brief Evalua `#embed`: incrusta el recurso como lista de bytes.
+     * @param node   Nodo de la directiva.
+     * @param output Salida a la que se anade.
+     */
+    void eval_embed(const EmbedNode& node, std::string& output);
 
     /**
      * @brief Averigua CUAL es el fichero de una inclusion, sin leerlo.

@@ -37,6 +37,7 @@ add_vpp_test(vpp_test_facts_cache  test_facts_cache.cpp)
 add_vpp_test(vpp_test_dialect      test_dialect.cpp)
 add_vpp_test(vpp_test_deps         test_deps.cpp)
 add_vpp_test(vpp_test_diag_render  test_diag_render.cpp)
+add_vpp_test(vpp_test_embed        test_embed.cpp)
 
 # --- suite de conformidad con el preprocesador de C -------------------------
 #
@@ -130,5 +131,6 @@ add_custom_target(vpp_run_tests
         vpp_test_dialect
         vpp_test_deps
         vpp_test_diag_render
+        vpp_test_embed
     COMMENT "Ejecutando todos los tests del preprocesador vpp"
 )

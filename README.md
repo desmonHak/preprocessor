@@ -68,6 +68,7 @@ valores distintos.
 #include "archivo"                        incluir archivo (relativo)
 #include <archivo>                        incluir archivo (ruta de sistema)
 #include_next <archivo>                   reanuda la busqueda tras la ruta actual
+#embed   "recurso"                        incrusta un binario como lista de bytes
 #if      expr                             condicional por expresion
 #ifdef   NAME                             condicional si esta definido
 #ifndef  NAME                             condicional si NO esta definido
@@ -269,6 +270,50 @@ Las expresiones de `#if` y `#elif` soportan:
 - Operador `defined(NAME)` y `defined NAME`
 
 
+
+---
+
+## Incrustar un recurso: #embed
+
+Mete un binario -- un icono, una tabla, una clave -- dentro del fuente, sin
+generar el fichero intermedio con un script aparte.  Es de C23 y el recurso se
+busca con las MISMAS rutas que un `#include`:
+
+```c
+const unsigned char logo[] = {
+#embed "logo.png"
+};
+```
+
+| Parametro | Que hace |
+| :-------- | :------- |
+| `limit(N)` | Lee N bytes como mucho.  Acepta una macro |
+| `prefix(...)` | Tokens antes de los datos |
+| `suffix(...)` | Tokens despues |
+| `if_empty(...)` | Tokens en lugar de todo, si el recurso esta vacio |
+
+Un recurso vacio -- o un `limit(0)` -- **no emite ni prefijo ni sufijo**, solo lo
+que diga `if_empty`.  Tiene sentido: el prefijo suele ser el separador que une
+los datos con lo que tienen al lado, y sin datos sobra.  Esta medido contra gcc.
+
+`__has_embed` dice si el recurso se puede incrustar, y devuelve **tres** valores
+y no dos:
+
+```c
+#if __has_embed("logo.png")            // 1 esta y tiene datos
+const unsigned char logo[] = {
+#embed "logo.png"
+};
+#else                                  // 0 no esta, 2 esta pero vacio
+const unsigned char logo[] = {0};
+#endif
+```
+
+La diferencia importa: un recurso vacio no se puede incrustar igual que uno con
+datos.
+
+Los bytes salen sin signo -- 255, no -1 -- y un cero no corta la lectura: lo que
+se lee es un binario, no una cadena.
 ---
 
 ## Cualquier lenguaje: el marcador de directiva
@@ -1794,6 +1839,7 @@ ctest --output-on-failure -V
 ./vpp_test_dialect         ; marcador de directiva por fichero
 ./vpp_test_deps            ; lista de dependencias para el build
 ./vpp_test_diag_render     ; diagnosticos con contexto
+./vpp_test_embed           ; #embed y __has_embed
 ```
 
 ### Integracion continua
@@ -1872,6 +1918,7 @@ omiten en vez de dar un rojo que no dice nada del codigo.
 | `vpp_test_dialect`     | Marcador de directiva declarado en el fichero, y que una errata siga siendo error |
 | `vpp_test_deps`        | Lista de dependencias: objetivo, escapado, partido de lineas y objetivos ficticios |
 | `vpp_test_diag_render` | Diagnosticos con contexto: cita de la linea, posicion del cursor y tabuladores |
+| `vpp_test_embed`       | #embed: parametros, datos binarios y los tres valores de __has_embed |
 | `vpp_test_compiler_id` | Identificacion del compilador: extraer el ejecutable, buscarlo por el PATH, y que la huella cambie al cambiar el binario o los flags |
 | `vpp_test_facts_cache` | Memoria entre ejecuciones: persistencia, separacion por compilador, fusion de escrituras y lo que se niega a guardar |
 
@@ -2012,6 +2059,7 @@ preprocessor/
 |   +-- test_new_features.cpp
 |   +-- test_variables.cpp        tests de #set
 |   +-- test_float_conv.cpp       tests de macros IEEE 754 y conversion
+|   +-- test_embed.cpp             tests de #embed
 |   +-- test_import.cpp           tests de #import
 |   +-- test_c_api.cpp            tests del ABI en C
 |   +-- test_include_search.cpp   tests de la busqueda de inclusiones

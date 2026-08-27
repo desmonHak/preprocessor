@@ -80,7 +80,10 @@ void Preprocessor::add_predef_source(PredefKind kind,
 bool Preprocessor::can_answer_capability(const std::string& name) {
     // `__has_include` no necesita compilador: se contesta con las rutas de
     // busqueda, que vpp ya tiene.
-    if (name == "__has_include" || name == "__has_include_next") return true;
+    if (name == "__has_include" || name == "__has_include_next" ||
+        name == "__has_embed") {
+        return true;
+    }
 
     // Para el resto hace falta un compilador...
     if (m_opts.capabilities_command.empty()) return false;
@@ -217,6 +220,34 @@ int64_t Preprocessor::resolve_capability(const std::string& op,
                                     ? std::string()
                                     : m_include_stack.back().path;
         return m_search.locate(ruta, sistema, desde).found ? 1 : 0;
+    }
+
+    /* `__has_embed` tampoco necesita compilador: pregunta por un recurso, y eso
+     * se sabe con las mismas rutas.  Devuelve TRES valores, no dos -- 1 si esta
+     * y tiene contenido, 2 si esta y esta vacio, 0 si no esta -- porque un
+     * recurso vacio no se puede incrustar igual que uno con datos y quien
+     * pregunta necesita distinguirlo. */
+    if (op == "__has_embed") {
+        std::string ruta = arg;
+        bool sistema = false;
+        if (ruta.size() >= 2 && ruta.front() == '<' && ruta.back() == '>') {
+            ruta = ruta.substr(1, ruta.size() - 2);
+            sistema = true;
+        } else if (ruta.size() >= 2 && ruta.front() == '"' &&
+                                       ruta.back()  == '"') {
+            ruta = ruta.substr(1, ruta.size() - 2);
+        }
+        if (ruta.empty()) return 0;
+
+        const std::string desde = m_include_stack.empty()
+                                    ? std::string()
+                                    : m_include_stack.back().path;
+        const ResolvedInclude situado = m_search.locate(ruta, sistema, desde);
+        if (!situado.found) return 0;   // __STDC_EMBED_NOT_FOUND__
+
+        std::string datos;
+        if (!read_file(situado.path, datos)) return 0;
+        return datos.empty() ? 2 : 1;   // __STDC_EMBED_EMPTY__ / _FOUND__
     }
 
     // El resto pregunta por el compilador, y de eso se encarga el oraculo.  La
@@ -433,6 +464,9 @@ void Preprocessor::eval_node(const ASTNode& node, std::string& output) {
         case NodeKind::INCLUDE:
             eval_include(static_cast<const IncludeNode&>(node), output);
             break;
+        case NodeKind::EMBED:
+            eval_embed(static_cast<const EmbedNode&>(node), output);
+            break;
 
         case NodeKind::IF_BLOCK:
             eval_if_block(static_cast<const IfBlockNode&>(node), output);
@@ -563,6 +597,68 @@ void Preprocessor::eval_define(const DefineNode& node) {
     }
 }
 
+
+void Preprocessor::eval_embed(const EmbedNode& node, std::string& output) {
+    // El recurso se busca con las MISMAS rutas que un #include: es lo que
+    // espera quien ya tiene su proyecto configurado.
+    const std::string desde = m_include_stack.empty()
+                                ? node.loc.file()
+                                : m_include_stack.back().path;
+    const ResolvedInclude situado =
+        m_search.locate(node.path, node.is_system, desde);
+
+    if (!situado.found) {
+        m_diag.error(node.loc, "recurso de #embed no encontrado: " + node.path);
+        return;
+    }
+
+    std::string datos;
+    if (!read_file(situado.path, datos)) {
+        m_diag.error(node.loc, "no se pudo leer el recurso: " + situado.path);
+        return;
+    }
+
+    // `limit` se evalua como una expresion porque puede ser una macro.
+    if (node.has_limit) {
+        const int64_t tope = eval_int(node.limit_tokens, node.loc);
+        if (tope <= 0) datos.clear();
+        else if (static_cast<uint64_t>(tope) < datos.size()) {
+            datos.resize(static_cast<std::size_t>(tope));
+        }
+    }
+
+    /* Un recurso vacio NO emite ni prefijo ni sufijo, solo lo que diga
+     * `if_empty`.  Es lo que hace gcc y esta medido: tiene sentido, porque el
+     * prefijo suele ser el separador que une los datos con lo de al lado, y sin
+     * datos sobra. */
+    /* Lo que se emita ocupa la LINEA de la directiva, con su salto al final.
+     *
+     * Sin el, los datos se pegaban al texto de la linea siguiente -- salia
+     * `97,98,99tres` -- que no es solo feo: cambia lo que el compilador lee.
+     * Una directiva que no produce nada si puede desaparecer sin dejar linea,
+     * pero esta produce. */
+    if (datos.empty()) {
+        if (node.has_if_empty) {
+            output += expand_to_text(node.if_empty, node.loc);
+            output += '\n';
+        }
+        return;
+    }
+
+    if (!node.prefix.empty()) output += expand_to_text(node.prefix, node.loc);
+
+    // Los bytes se emiten como enteros separados por comas, que es lo que pide
+    // el estandar para poder inicializar un array de unsigned char.
+    output.reserve(output.size() + datos.size() * 4);
+    for (std::size_t i = 0; i < datos.size(); ++i) {
+        if (i) output += ',';
+        output += std::to_string(
+            static_cast<unsigned>(static_cast<unsigned char>(datos[i])));
+    }
+
+    if (!node.suffix.empty()) output += expand_to_text(node.suffix, node.loc);
+    output += '\n';
+}
 void Preprocessor::eval_include(const IncludeNode& node, std::string& output) {
     // Ruta a traves de macros: `#include CABECERA`.  El parser dejo los tokens
     // sin resolver porque no ve la tabla; se expanden aqui y el resultado tiene
@@ -862,6 +958,38 @@ void Preprocessor::eval_repeat(const RepeatNode& node, std::string& output) {
     m_macros.undef("__REPEAT_INDEX__");
 }
 
+
+int64_t Preprocessor::eval_int(const std::vector<PPToken>& tokens,
+                               const SourceLocation& loc) {
+    // Mismo evaluador que las condiciones; lo unico que cambia es que aqui
+    // interesa el VALOR y no si es cero.  Tenerlo aparte evita que quien
+    // necesite un numero tenga que reconstruir el evaluador por su cuenta.
+    const SourceLocation pos = mapped_position(loc);
+    m_macros.set_source_position(pos.file(), pos.line);
+    PPEvaluator eval(m_macros, m_diag,
+        [this](const std::string& op, const std::string& arg) {
+            return resolve_capability(op, arg);
+        },
+        [this](const std::string& name) {
+            return can_answer_capability(name);
+        });
+    return eval.evaluate(tokens, loc);
+}
+
+std::string Preprocessor::expand_to_text(const std::vector<PPToken>& tokens,
+                                         const SourceLocation& loc) {
+    if (tokens.empty()) return {};
+
+    std::string out;
+    if (!m_opts.expand_macros) {
+        for (const auto& t : tokens) out += t.value;
+        return out;
+    }
+    const SourceLocation pos = mapped_position(loc);
+    m_macros.set_source_position(pos.file(), pos.line);
+    for (const auto& t : m_macros.expand(tokens, loc)) out += t.value;
+    return out;
+}
 bool Preprocessor::eval_condition(const std::vector<PPToken>& tokens,
                                    const SourceLocation& loc) {
     // una condicion puede usar __LINE__, asi que tambien necesita la posicion

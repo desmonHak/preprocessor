@@ -270,6 +270,7 @@ NodePtr PPParser::parse_directive() {
     if (dir_name == "define")     return parse_define(hash_loc);
     if (dir_name == "undef")      return parse_undef(hash_loc);
     if (dir_name == "include")    return parse_include(hash_loc);
+    if (dir_name == "embed")      return parse_embed(hash_loc);
     // Misma sintaxis que #include; solo cambia por donde empieza a buscar, y
     // eso se decide al evaluar.
     if (dir_name == "include_next") {
@@ -416,6 +417,97 @@ NodePtr PPParser::parse_undef(SourceLocation hash_loc) {
     return std::make_unique<UndefNode>(hash_loc, std::move(name));
 }
 
+
+NodePtr PPParser::parse_embed(SourceLocation hash_loc) {
+    while (check(PPTokenType::WHITESPACE)) consume();
+
+    // La ruta se escribe igual que en un #include, y con las mismas dos formas.
+    std::string path;
+    bool is_system = false;
+
+    if (check(PPTokenType::STRING)) {
+        const std::string raw = cur().value;
+        path = raw.substr(1, raw.size() - 2);
+        consume();
+    } else if (check(PPTokenType::ANGLE_STRING)) {
+        const std::string raw = cur().value;
+        path = raw.substr(1, raw.size() - 2);
+        is_system = true;
+        consume();
+    } else if (check(PPTokenType::LT)) {
+        consume();
+        is_system = true;
+        while (!check(PPTokenType::GT) && !check(PPTokenType::NEWLINE) &&
+               !check(PPTokenType::PP_EOF)) {
+            path += cur().value;
+            consume();
+        }
+        if (check(PPTokenType::GT)) consume();
+    } else {
+        m_diag.error(hash_loc, "#embed requiere \"recurso\" o <recurso>");
+        consume_rest_of_line();
+        return nullptr;
+    }
+
+    auto node = std::make_unique<EmbedNode>(hash_loc, std::move(path), is_system);
+
+    /* Parametros del estandar: limit, prefix, suffix, if_empty.
+     *
+     * Todos llevan sus tokens entre parentesis, asi que se recogen contando la
+     * profundidad en lugar de buscar el primer ')': `prefix(f(1),)` es legitimo
+     * y con una busqueda ingenua se cortaria por la mitad. */
+    for (;;) {
+        while (check(PPTokenType::WHITESPACE)) consume();
+        if (check(PPTokenType::NEWLINE) || check(PPTokenType::PP_EOF)) break;
+        if (!check(PPTokenType::IDENT)) break;
+
+        const std::string nombre = cur().value;
+        const SourceLocation ploc = cur().loc;
+        consume();
+        while (check(PPTokenType::WHITESPACE)) consume();
+
+        if (!check(PPTokenType::LPAREN)) {
+            m_diag.error(ploc, "el parametro '" + nombre + "' de #embed "
+                               "necesita sus argumentos entre parentesis");
+            break;
+        }
+        consume();   // '('
+
+        std::vector<PPToken> args;
+        int prof = 1;
+        while (!check(PPTokenType::PP_EOF) && !check(PPTokenType::NEWLINE)) {
+            if (check(PPTokenType::LPAREN)) ++prof;
+            if (check(PPTokenType::RPAREN)) {
+                --prof;
+                if (prof == 0) { consume(); break; }
+            }
+            args.push_back(consume());
+        }
+
+        if (nombre == "limit") {
+            // El limite se evalua como una expresion en eval_embed, que es quien
+            // ve la tabla de macros: `limit(N)` con N macro es legitimo.
+            node->has_limit = true;
+            node->limit_tokens = std::move(args);
+        } else if (nombre == "prefix") {
+            node->prefix = std::move(args);
+        } else if (nombre == "suffix") {
+            node->suffix = std::move(args);
+        } else if (nombre == "if_empty") {
+            node->has_if_empty = true;
+            node->if_empty     = std::move(args);
+        } else {
+            // Los parametros de proveedor llevan `::` en el nombre y no se
+            // reconocen; se avisa en vez de fallar, para que un fuente escrito
+            // para otro compilador se pueda seguir preprocesando.
+            m_diag.warning(ploc,
+                "parametro de #embed desconocido, se ignora: " + nombre);
+        }
+    }
+
+    consume_rest_of_line();
+    return node;
+}
 NodePtr PPParser::parse_include(SourceLocation hash_loc) {
     while (check(PPTokenType::WHITESPACE)) consume();
 

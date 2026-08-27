@@ -26,6 +26,7 @@ enum class NodeKind : uint8_t {
     DEFINE,         ///< Directiva #define
     UNDEF,          ///< Directiva #undef
     INCLUDE,        ///< Directiva #include
+    EMBED,          ///< Directiva #embed (C23): incrusta un recurso binario
     IF_BLOCK,       ///< Bloque #if / #ifdef / #ifndef ... #endif
     ERROR_DIR,      ///< Directiva #error
     WARNING_DIR,    ///< Directiva #warning
@@ -146,6 +147,43 @@ struct UndefNode : ASTNode {
         : ASTNode(NodeKind::UNDEF, std::move(l)), name(std::move(n)) {}
 };
 
+
+/**
+ * @brief Directiva `#embed`: incrusta un recurso como lista de bytes.
+ *
+ * Es de C23 y sirve para meter un binario -- un icono, una tabla, una clave --
+ * dentro del fuente sin generar el fichero intermedio con un script aparte.
+ * El recurso se busca con las MISMAS rutas que un `#include`.
+ *
+ * Los parametros son los del estandar.  `limit` recorta cuantos bytes se leen;
+ * `prefix` y `suffix` emiten tokens antes y despues de los datos, pero SOLO si
+ * hay datos; `if_empty` los sustituye a todos cuando el recurso esta vacio.
+ * Comprobado contra gcc: un recurso vacio -- o un `limit(0)` -- no emite ni
+ * prefijo ni sufijo, solo lo que diga `if_empty`.
+ */
+struct EmbedNode : ASTNode {
+    std::string path;        ///< Ruta del recurso
+    bool        is_system;   ///< true si es <ruta>, false si es "ruta"
+
+    bool                 has_limit = false; ///< true si se dio `limit`
+    std::vector<PPToken> limit_tokens;      ///< Expresion de `limit`, sin evaluar
+
+    std::vector<PPToken> prefix;            ///< Tokens antes de los datos
+    std::vector<PPToken> suffix;            ///< Tokens despues
+    std::vector<PPToken> if_empty;          ///< Tokens si el recurso esta vacio
+    bool                 has_if_empty = false; ///< true si se dio `if_empty`
+
+    /**
+     * @brief Constructor.
+     * @param l Ubicacion de la directiva.
+     * @param p Ruta del recurso.
+     * @param sys true para la forma `<...>`.
+     */
+    EmbedNode(SourceLocation l, std::string p, bool sys)
+        : ASTNode(NodeKind::EMBED, std::move(l))
+        , path(std::move(p))
+        , is_system(sys) {}
+};
 /**
  * @brief Nodo #include / #import: inclusion de otro archivo fuente o libreria de macros.
  *

@@ -150,6 +150,13 @@ private:
     NodePtr parse_include(SourceLocation hash_loc);
 
     /**
+     * @brief Parsea `#embed` y sus parametros.
+     * @param hash_loc Ubicacion del marcador.
+     * @return El nodo, o nullptr si la directiva esta mal formada.
+     */
+    NodePtr parse_embed(SourceLocation hash_loc);
+
+    /**
      * @brief Parsea #import <path> (inclusion de libreria de macros vpp).
      *
      * Equivalente a #include <path> pero con semantica auto-once y busqueda
