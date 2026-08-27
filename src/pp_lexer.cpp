@@ -313,13 +313,13 @@ void PPLexer::scan_text_line(std::vector<PPToken>& out) {
             continue;
         }
         // literales de cadena: no expandir macros dentro de ellas
-        if (peek() == '"') {
+        if (m_opts.strings && peek() == '"') {
             flush_text();
             out.push_back(scan_string('"'));
             text_start = loc();
             continue;
         }
-        if (peek() == '\'') {
+        if (m_opts.char_literals && peek() == '\'') {
             flush_text();
             out.push_back(scan_string('\''));
             text_start = loc();
@@ -399,7 +399,12 @@ PPToken PPLexer::next_directive_token_nosp() {
         return scan_number();
     }
 
-    // literales de cadena
+    // Literales de cadena.
+    //
+    // Aqui NO se miran `strings` ni `char_literals`: esas opciones hablan del
+    // texto del lenguaje de destino, y dentro de una directiva rige la sintaxis
+    // de vpp.  Apagarlas aqui romperia `#include "fichero.h"` en cuanto alguien
+    // las usara, que es justo el caso para el que existen.
     if (c == '"') {
         return scan_string('"');
     }

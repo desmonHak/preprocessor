@@ -161,6 +161,61 @@ static void test_ajuste_desconocido() {
     CHECK(g_errores == 1, "un ajuste de dialecto desconocido es un error");
 }
 
+
+/* --- comillas ------------------------------------------------------------- */
+
+/**
+ * @brief Sin literales de caracter, un apostrofo es un apostrofo.
+ *
+ * Con el tratamiento de C, `It's a test` fallaba con "literal de cadena sin
+ * cerrar": una frase corriente en ingles.  Le pasa a cualquier prosa, y a
+ * cualquier lenguaje donde la comilla simple no delimite nada.
+ */
+static void test_apostrofo_en_texto() {
+    const std::string out = pp(
+        "// vpp:char-literals=0\nIt's a test, don't panic\nsegunda linea\n");
+    CHECK(contains(out, "It's a test, don't panic"),
+          "el texto con apostrofos llega intacto");
+    CHECK(contains(out, "segunda linea"), "y la linea siguiente tambien");
+    CHECK(g_errores == 0, "sin errores");
+}
+
+/** @brief Y sin cadenas, una comilla doble suelta tampoco rompe nada. */
+static void test_comilla_suelta_en_texto() {
+    const std::string out = pp(
+        "// vpp:strings=0\nuna \" suelta y ya\notra linea\n");
+    CHECK(contains(out, "una \" suelta y ya"),
+          "una comilla doble sin pareja es texto");
+    CHECK(g_errores == 0, "sin errores");
+}
+
+/**
+ * @brief Las directivas conservan su sintaxis aunque el texto no.
+ *
+ * `strings` y `char-literals` hablan del texto del lenguaje de destino; dentro
+ * de una directiva rige la sintaxis de vpp.  Si no, apagarlas romperia
+ * `#include "fichero.h"`, que es justo lo que se necesita en el lenguaje para
+ * el que se apagan.
+ */
+static void test_directivas_conservan_sus_cadenas() {
+    const std::string out = pp(
+        "// vpp:strings=0 char-literals=0\n"
+        "#define S \"hola\"\n"
+        "valor S y un ' suelto\n");
+    CHECK(contains(out, "valor \"hola\""),
+          "una directiva sigue leyendo su cadena");
+    CHECK(contains(out, "un ' suelto"), "y el texto sigue siendo texto");
+    CHECK(g_errores == 0, "sin errores");
+}
+
+/** @brief Por omision se comportan como en C. */
+static void test_comillas_por_omision() {
+    const std::string out = pp(
+        "#define M 1\nauto s = \"aqui M no se expande\";\n");
+    CHECK(contains(out, "\"aqui M no se expande\""),
+          "por omision una cadena protege su contenido");
+    CHECK(g_errores == 0, "sin errores");
+}
 /* --- alcance -------------------------------------------------------------- */
 
 /**
@@ -214,6 +269,10 @@ int main() {
     test_declaracion_en_cualquier_comentario();
     test_declaracion_solo_al_principio();
     test_ajuste_desconocido();
+    test_apostrofo_en_texto();
+    test_comilla_suelta_en_texto();
+    test_directivas_conservan_sus_cadenas();
+    test_comillas_por_omision();
     test_dialecto_por_fichero();
 
     std::cout << "\nResultados: " << tests_passed << " pasados, "

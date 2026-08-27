@@ -327,12 +327,36 @@ un nombre desconocido ahi es una equivocacion; lo que no, es texto y sale
 intacto.  Antes esto era un aviso Y ademas se tragaba la linea, que es lo peor
 de las dos opciones.
 
+
+### Comentarios y comillas
+
+Lo mismo vale para el resto de lo que el lexer da por sentado de C.  Los
+ajustes que admite la declaracion:
+
+| Ajuste | Que hace | Para que |
+| :----- | :------- | :------- |
+| `marker=X` | Que empieza una directiva | `#` es comentario en Python, shell, Ruby, Make |
+| `line-comments=0` | `//` deja de comentar | En Lua es division entera: `7 // 2` perdia el `// 2` **sin avisar** |
+| `block-comments=0` | `/* */` deja de comentar | Lenguajes que no los tienen |
+| `strings=0` | `"` deja de abrir cadena | Texto llano, o donde la comilla no delimite |
+| `char-literals=0` | `'` deja de abrir caracter | Un apostrofo: `It's a test` fallaba con "literal sin cerrar" |
+| `raw-strings=0` | `R"(...)"` deja de ser cruda | Donde un nombre pueda ir pegado a una comilla |
+
+```
+-- vpp:marker=% line-comments=0
+local n = 7 // 2            -- la division sobrevive
+```
+
+Estos ajustes hablan del **texto del lenguaje de destino**.  Dentro de una
+directiva rige siempre la sintaxis de vpp, asi que `#include "fichero.h"` sigue
+leyendo su cadena aunque `strings` este apagado -- que es justo el lenguaje en
+el que hara falta.
 ### Alcance
 
 El dialecto es **de cada fichero** y no se hereda al incluir.  Un fuente en
 Python con marcador `%` puede hacer `%include "cabecera.h"` y esa cabecera se
-lee con el suyo.  Otros ajustes que admite la declaracion: `raw-strings`,
-`line-comments`, `block-comments`.
+lee con el suyo.
+
 ---
 
 ## Metaprogramacion

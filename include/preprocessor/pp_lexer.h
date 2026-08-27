@@ -45,7 +45,28 @@ struct LexerOptions {
      * omision porque el tratamiento de comillas ya es el de C.
      */
     bool raw_strings         = true;
+
+    /**
+     * @brief Tratar `"` como comienzo de un literal de cadena.
+     *
+     * Apagarlo hace que la comilla sea texto corriente.  Hace falta en un
+     * lenguaje -- o en texto llano -- donde no delimite nada, porque entonces
+     * la comilla de apertura no tiene cierre y el literal se come el resto.
+     */
+    bool strings             = true;
+
+    /**
+     * @brief Tratar `'` como comienzo de un literal de caracter.
+     *
+     * Va aparte de `strings` porque son dos decisiones distintas: SQL usa la
+     * comilla simple para cadenas y la doble para identificadores, Rust la
+     * simple tambien para tiempos de vida, y en texto llano es un apostrofo.
+     * Con esto encendido, `It's a test` fallaba con "literal de cadena sin
+     * cerrar" -- una frase corriente en ingles.
+     */
+    bool char_literals       = true;
 };
+
 
 /**
  * @brief Lexer del preprocesador.

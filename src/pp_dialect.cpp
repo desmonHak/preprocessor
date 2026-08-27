@@ -38,6 +38,14 @@ void apply_setting(const std::string& clave,
         opts.directive_marker = valor;
         return;
     }
+    if (clave == "strings") {
+        opts.strings = (valor != "0" && valor != "no" && valor != "false");
+        return;
+    }
+    if (clave == "char-literals") {
+        opts.char_literals = (valor != "0" && valor != "no" && valor != "false");
+        return;
+    }
     if (clave == "raw-strings") {
         opts.raw_strings = (valor != "0" && valor != "no" && valor != "false");
         return;
