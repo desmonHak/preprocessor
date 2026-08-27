@@ -12,10 +12,21 @@ namespace vpp {
 static const PPToken EOF_TOKEN(PPTokenType::PP_EOF, "", {});
 
 PPEvaluator::PPEvaluator(MacroTable& macros, DiagnosticEngine& diag,
-                         CapabilityResolver caps)
-    : m_macros(macros), m_diag(diag), m_caps(std::move(caps)), m_pos(0)
+                         CapabilityResolver  caps,
+                         CapabilityPredicate cap_known)
+    : m_macros(macros), m_diag(diag), m_caps(std::move(caps)),
+      m_cap_known(std::move(cap_known)), m_pos(0)
 {}
 
+
+bool PPEvaluator::name_is_defined(const std::string& name) const {
+    // Un operador de prueba de caracteristicas NO es una macro, pero para
+    // `defined()` cuenta como definido si vpp sabe contestarlo.  Sin esto, las
+    // cabeceras que se protegen con `#ifndef __has_builtin` se instalan una
+    // macro que responde 0 a todo y anulan todas las consultas posteriores.
+    return m_macros.is_defined(name) ||
+           (m_cap_known && m_cap_known(name));
+}
 std::vector<PPToken> PPEvaluator::resolve_defined(
         const std::vector<PPToken>& tokens) const {
     std::vector<PPToken> out;
@@ -69,7 +80,7 @@ std::vector<PPToken> PPEvaluator::resolve_defined(
         // El resultado sustituye a TODO el operador, incluido su operando: asi
         // el nombre de la macro nunca llega a la fase de expansion.
         out.emplace_back(PPTokenType::NUMBER,
-                         m_macros.is_defined(name) ? "1" : "0",
+                         name_is_defined(name) ? "1" : "0",
                          t.loc);
         i = j - 1;
     }
@@ -513,7 +524,7 @@ PPValue PPEvaluator::parse_primary() {
                     m_diag.error(cur().loc, "se esperaba ')' en defined()");
                 }
             }
-            return PPValue{m_macros.is_defined(macro_name) ? 1 : 0, false};
+            return PPValue{name_is_defined(macro_name) ? 1 : 0, false};
         }
 
         if (t.value == "true")  return PPValue{1, false};

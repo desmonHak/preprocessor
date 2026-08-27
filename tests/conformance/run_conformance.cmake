@@ -85,7 +85,11 @@ foreach(case IN LISTS CASES)
         RESULT_VARIABLE ref_rc)
 
     execute_process(
-        COMMAND "${VPP}" "${name}"
+        # Se le da el MISMO compilador que hace de oraculo: los operadores de
+        # prueba de caracteristicas preguntan por el, y compararse contra gcc
+        # mientras se le contesta a ciegas no mediria conformidad, mediria otra
+        # cosa.
+        COMMAND "${VPP}" --capabilities-from "${CC} -E -P" "${name}"
         WORKING_DIRECTORY "${dir}"
         OUTPUT_VARIABLE vpp_out
         ERROR_VARIABLE  vpp_err

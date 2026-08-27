@@ -25,6 +25,10 @@ namespace {
 const char* const kMarca = "__VPP_CAP__";
 }
 
+bool is_capability_operator(const std::string& name) noexcept {
+    return name.compare(0, 6, "__has_") == 0 && name.size() > 6;
+}
+
 CapabilityOracle::CapabilityOracle(std::string command)
     : m_command(std::move(command)) {}
 

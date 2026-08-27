@@ -176,6 +176,23 @@ que es la respuesta honesta -- "no consta que exista" -- y la que hace que el
 codigo bien escrito tome su rama de reserva en vez de romperse.  Si se sabe la
 respuesta, se puede fijar a mano con `-D__has_builtin(x)=1` o similar.
 
+Estos operadores ademas **constan como definidos**, que es una pregunta
+distinta de cuanto valen y hay que contestarla igual.  Las bibliotecas estandar
+se protegen asi:
+
+```
+#ifndef __has_builtin
+#  define __has_builtin(x) 0
+#endif
+```
+
+Un preprocesador que no se declare capaz se come esa macro, y a partir de ahi
+toda consulta responde 0 aunque hubiera compilador al que preguntar.  Con
+`--capabilities-from` vpp se declara capaz y el shim no se instala; sin el, no
+se declara, el shim entra y el codigo toma su rama de reserva -- que es
+exactamente para lo que el shim existe.  `__has_include` consta como definido
+siempre, porque no necesita compilador.
+
 ---
 
 ### Operadores en cuerpo de macros
@@ -1455,7 +1472,7 @@ que el estandar **exige**, y por eso podian estar en verde mientras
 
 | Suite | Que mide |
 | :---- | :------- |
-| `vpp_test_conformance` | 43 casos preprocesados con vpp y con `gcc`/`clang`, comparando las salidas |
+| `vpp_test_conformance` | 44 casos preprocesados con vpp y con `gcc`/`clang`, comparando las salidas |
 | `vpp_test_system_headers` | Preprocesa un fuente con cabeceras de C del sistema, **compila** la salida y **ejecuta** el binario |
 | `vpp_test_system_headers_cxx` | Lo mismo con `<string>`, `<vector>`, `<algorithm>` e `<iostream>`: es el unico sitio donde `#include_next` y los operadores de prueba de caracteristicas se ejercitan de verdad |
 
@@ -1468,7 +1485,7 @@ Los casos que se sepa que fallan van en `tests/conformance/xfail.txt` con la
 explicacion de que falla.  Uno listado que falla no rompe la suite; uno que
 **pasa** se reporta como XPASS y si la rompe, para obligar a sacarlo de la lista
 al arreglar el bug.  Asi el fichero no puede quedarse mintiendo sobre el estado
-real.  Ahora mismo la lista esta vacia: 43/43.
+real.  Ahora mismo la lista esta vacia: 44/44.
 
 Las tres se registran solo si hay un compilador de referencia; sin el se
 omiten en vez de dar un rojo que no dice nada del codigo.

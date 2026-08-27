@@ -71,6 +71,26 @@ void Preprocessor::add_predef_source(PredefKind kind,
     m_opts.predef_sources.push_back(PredefSource{kind, value});
 }
 
+
+bool Preprocessor::capability_is_defined(const std::string& name) const {
+    if (!is_capability_operator(name)) return false;
+
+    // `__has_include` no necesita compilador: se contesta con las rutas de
+    // busqueda, que vpp ya tiene.
+    if (name == "__has_include" || name == "__has_include_next") return true;
+
+    // Se mira la OPCION y no el estado del oraculo: la orden se le pasa al
+    // oraculo de forma perezosa, en la primera consulta de verdad, asi que
+    // preguntarle a el aqui daria "no hay compilador" hasta que ya fuese tarde
+    // -- y este predicado se consulta ANTES, en el `#ifndef` que decide si se
+    // instala el shim.
+    return !m_opts.capabilities_command.empty();
+}
+
+bool Preprocessor::name_is_defined(const std::string& name) const {
+    return m_macros.is_defined(name) || capability_is_defined(name);
+}
+
 int64_t Preprocessor::resolve_capability(const std::string& op,
                                          const std::string& arg) {
     // `__has_include` lo contesta vpp POR SI MISMO.  Pregunta por si una ruta
@@ -211,8 +231,17 @@ std::string Preprocessor::process(const std::string& source,
     std::string output;
     output.reserve(source.size());
 
+    // El fichero de partida entra en la pila como cualquier otro.  No es un
+    // adorno: sin su marco, todo lo que pregunta "donde estoy" -- el vecino de
+    // un `#include "..."`, el de un `__has_include("...")`, la clave de un
+    // `#pragma once` -- se queda sin respuesta justo en el nivel de arriba, que
+    // es donde mas se nota.  Con el, la pila nunca esta vacia mientras se
+    // evalua y el caso especial desaparece.
+    m_include_stack.push_back(IncludeFrame{filename, -1});
+
     const auto* block = static_cast<const BlockNode*>(ast.get());
     eval_block(*block, output);
+    m_include_stack.pop_back();
 
     return output;
 }
@@ -512,12 +541,12 @@ void Preprocessor::eval_if_block(const IfBlockNode& node, std::string& output) {
         case IfBlockNode::Kind::IFDEF:
             if (!node.condition.empty() &&
                 node.condition[0].type == PPTokenType::IDENT) {
-                cond = m_macros.is_defined(node.condition[0].value);
+                cond = name_is_defined(node.condition[0].value);
             } else {
                 // buscar el primer IDENT en la condicion
                 for (const auto& t : node.condition) {
                     if (t.type == PPTokenType::IDENT) {
-                        cond = m_macros.is_defined(t.value);
+                        cond = name_is_defined(t.value);
                         break;
                     }
                 }
@@ -526,11 +555,11 @@ void Preprocessor::eval_if_block(const IfBlockNode& node, std::string& output) {
         case IfBlockNode::Kind::IFNDEF:
             if (!node.condition.empty() &&
                 node.condition[0].type == PPTokenType::IDENT) {
-                cond = !m_macros.is_defined(node.condition[0].value);
+                cond = !name_is_defined(node.condition[0].value);
             } else {
                 for (const auto& t : node.condition) {
                     if (t.type == PPTokenType::IDENT) {
-                        cond = !m_macros.is_defined(t.value);
+                        cond = !name_is_defined(t.value);
                         break;
                     }
                 }
@@ -642,6 +671,9 @@ bool Preprocessor::eval_condition(const std::vector<PPToken>& tokens,
     PPEvaluator eval(m_macros, m_diag,
         [this](const std::string& op, const std::string& arg) {
             return resolve_capability(op, arg);
+        },
+        [this](const std::string& name) {
+            return capability_is_defined(name);
         });
     return eval.evaluate(tokens, loc) != 0;
 }

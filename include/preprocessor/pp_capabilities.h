@@ -11,6 +11,20 @@
 namespace vpp {
 
 /**
+ * @brief Dice si un nombre es un operador de prueba de caracteristicas.
+ *
+ * La lista no se enumera: vale cualquier `__has_algo`.  Los compiladores no
+ * comparten el mismo juego -- `__has_feature` y `__has_warning` son de clang,
+ * `__has_c_attribute` es de C23 -- y quien manda es el compilador de destino,
+ * que es a quien se le va a preguntar.  Enumerarlos aqui solo serviria para
+ * quedarse corto cada vez que aparezca uno nuevo.
+ *
+ * @param name Identificador a examinar.
+ * @return true si tiene la forma de uno de estos operadores.
+ */
+bool is_capability_operator(const std::string& name) noexcept;
+
+/**
  * @brief Responde a los operadores `__has_builtin`, `__has_attribute` y demas.
  *
  * Esos operadores NO preguntan por una macro: preguntan por lo que sabe hacer

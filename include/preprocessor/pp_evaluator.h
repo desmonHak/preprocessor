@@ -28,6 +28,19 @@ using CapabilityResolver =
     std::function<int64_t(const std::string& op, const std::string& arg)>;
 
 /**
+ * @brief Dice si un nombre esta definido a efectos de `defined()`.
+ *
+ * Va aparte del resolutor porque son dos preguntas distintas: una es "cuanto
+ * vale este operador" y la otra "existe siquiera".  Sin la segunda, las
+ * cabeceras que se protegen con `#ifndef __has_builtin` instalan una macro que
+ * responde 0 a todo y anulan la primera.
+ *
+ * @param name Identificador, con sus dos guiones bajos.
+ * @return true si vpp sabe contestar a ese operador.
+ */
+using CapabilityPredicate = std::function<bool(const std::string& name)>;
+
+/**
  * @brief Valor de una expresion del preprocesador, con su caracter de signo.
  *
  * El estandar de C evalua las condiciones de `#if` en el entero mas ancho
@@ -74,9 +87,12 @@ public:
      * @param diag   Motor de diagnosticos.
      * @param caps   Resolutor de operadores de prueba de caracteristicas.  Nulo
      *               significa que no hay a quien preguntar y valen 0.
+     * @param cap_known Predicado que dice si uno de esos operadores EXISTE, para
+     *               `defined()`.  Nulo significa que ninguno.
      */
     PPEvaluator(MacroTable& macros, DiagnosticEngine& diag,
-                CapabilityResolver caps = nullptr);
+                CapabilityResolver  caps      = nullptr,
+                CapabilityPredicate cap_known = nullptr);
 
     /**
      * @brief Evalua una secuencia de tokens como expresion entera constante.
@@ -102,9 +118,23 @@ private:
     std::vector<PPToken> resolve_defined(
         const std::vector<PPToken>& tokens) const;
 
+    /**
+     * @brief Dice si un nombre esta definido a efectos de `defined()`.
+     *
+     * Une los dos motivos por los que puede estarlo -- ser una macro, o ser un
+     * operador de prueba de caracteristicas que se sabe contestar -- para que
+     * la decision este en un solo sitio y no se separe por descuido entre el
+     * pre-pase y el parser, que son los dos que la necesitan.
+     *
+     * @param name Identificador.
+     * @return true si esta definido.
+     */
+    bool name_is_defined(const std::string& name) const;
+
     MacroTable&       m_macros; ///< Referencia a la tabla de macros
     DiagnosticEngine& m_diag;   ///< Motor de diagnosticos
-    CapabilityResolver m_caps;  ///< Resolutor de capacidades; puede ser nulo
+    CapabilityResolver  m_caps;      ///< Resolutor de capacidades; puede ser nulo
+    CapabilityPredicate m_cap_known; ///< Predicado de existencia; puede ser nulo
 
     // Estado del parser de expresion
     std::vector<PPToken> m_toks; ///< Tokens de la expresion a evaluar

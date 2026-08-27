@@ -290,6 +290,45 @@ private:
     int64_t resolve_capability(const std::string& op, const std::string& arg);
 
     /**
+     * @brief Dice si un operador de prueba de caracteristicas cuenta como
+     *        definido para `#ifdef`, `#ifndef` y `defined()`.
+     *
+     * No es un detalle: las bibliotecas estandar se protegen con
+     *
+     *     #ifndef __has_builtin
+     *     #  define __has_builtin(x) 0
+     *     #endif
+     *
+     * de modo que un preprocesador que no se declare capaz acaba con una macro
+     * que responde 0 a TODO, y con ella las cabeceras se van por ramas que su
+     * compilador no usa.  Asi paso: libc++ moria en un `#error` porque el shim
+     * habia anulado todas las consultas.
+     *
+     * La respuesta depende de si de verdad se puede contestar.  `__has_include`
+     * siempre, porque pregunta por el sistema de ficheros y eso lo sabe vpp.
+     * El resto solo con un compilador al que preguntar; sin el, decir que no
+     * esta definido es lo correcto, porque deja que el shim instale su 0 y el
+     * codigo tome su rama de reserva.
+     *
+     * @param name Identificador tal y como aparece en la directiva.
+     * @return true si vpp puede contestar a ese operador.
+     */
+    bool capability_is_defined(const std::string& name) const;
+
+    /**
+     * @brief Dice si un nombre esta definido a efectos de `#ifdef` y `defined`.
+     *
+     * Une los dos motivos por los que puede estarlo: ser una macro, o ser un
+     * operador de prueba de caracteristicas que vpp sabe contestar.  Existe
+     * para que las dos condiciones se decidan en un solo sitio y no puedan
+     * separarse por descuido en alguno de los usos.
+     *
+     * @param name Identificador tal y como aparece en la directiva.
+     * @return true si esta definido.
+     */
+    bool name_is_defined(const std::string& name) const;
+
+    /**
      * @brief Precarga los conjuntos de macros de `predef_sources`.
      *
      * Cada uno se procesa como un fuente normal y su salida se descarta: lo que
