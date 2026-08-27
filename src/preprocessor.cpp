@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <algorithm>
 #include <ctime>
+#include <cctype>
 #include <cstdio>
 #include <iostream>
 #ifdef _WIN32
@@ -95,6 +96,85 @@ std::string Preprocessor::effective_cache_dir() const {
     if (!m_opts.use_cache) return {};
     if (!m_opts.cache_dir.empty()) return m_opts.cache_dir;
     return user_cache_dir();
+}
+
+namespace {
+
+/**
+ * @brief Indica si un token no aporta nada al texto de salida.
+ *
+ * Se mira el CONTENIDO y no solo el tipo: el lexer junta una racha de lineas en
+ * blanco en un unico token de texto, asi que exigir que el tipo fuese
+ * WHITESPACE o NEWLINE dejaba fuera justo el caso normal -- las lineas en blanco
+ * que toda cabecera tiene entre el comentario de cabecera y su guarda.
+ *
+ * @param tok Token a examinar.
+ * @return true si es solo espacio en blanco.
+ */
+bool is_blank_token(const PPToken& tok) {
+    if (tok.type == PPTokenType::WHITESPACE ||
+        tok.type == PPTokenType::NEWLINE) {
+        return true;
+    }
+    if (tok.type != PPTokenType::TEXT) return false;
+    for (const unsigned char c : tok.value) {
+        if (!std::isspace(c)) return false;
+    }
+    return true;
+}
+
+} // namespace
+
+void Preprocessor::record_include_guard(const std::string& path,
+                                        const BlockNode& block) {
+    // Ya anotado por una visita anterior.
+    if (m_include_guards.count(path)) return;
+
+    // Un unico condicional envolviendolo todo, y fuera de el solo blancos.
+    const IfBlockNode* guard = nullptr;
+    for (const auto& child : block.children) {
+        if (child->kind == NodeKind::IF_BLOCK) {
+            const auto* ib = static_cast<const IfBlockNode*>(child.get());
+            if (!guard && ib->variant == IfBlockNode::Kind::IFNDEF) {
+                guard = ib;
+                continue;
+            }
+            return;   // un segundo condicional: no es una guarda
+        }
+        if (child->kind != NodeKind::TEXT) return;
+        const auto* text = static_cast<const TextNode*>(child.get());
+        for (const auto& tok : text->tokens) {
+            if (!is_blank_token(tok)) return;  // texto de verdad fuera
+        }
+    }
+
+    // La condicion tiene que ser un solo nombre; `#ifndef A && B` no vale.
+    if (!guard || guard->condition.size() != 1 ||
+        guard->condition[0].type != PPTokenType::IDENT) {
+        return;
+    }
+    const std::string& name = guard->condition[0].value;
+
+    // Y lo primero que hace el cuerpo, definir ESE nombre.  Si no, entrar al
+    // fichero una segunda vez si tendria efectos.
+    const auto* body = static_cast<const BlockNode*>(guard->then_block.get());
+    if (!body) return;
+    for (const auto& child : body->children) {
+        if (child->kind == NodeKind::TEXT) {
+            const auto* text = static_cast<const TextNode*>(child.get());
+            bool blank = true;
+            for (const auto& tok : text->tokens) {
+                if (!is_blank_token(tok)) { blank = false; break; }
+            }
+            if (blank) continue;
+            return;
+        }
+        if (child->kind == NodeKind::DEFINE) {
+            const auto* def = static_cast<const DefineNode*>(child.get());
+            if (def->name == name) m_include_guards.emplace(path, name);
+        }
+        return;
+    }
 }
 
 bool Preprocessor::name_is_defined(const std::string& name) {
@@ -488,6 +568,18 @@ void Preprocessor::eval_include(const IncludeNode& node, std::string& output) {
         }
     }
 
+    /* Optimizacion de inclusion multiple: si de una visita anterior se sabe que
+     * este fichero es una guarda envolviendolo todo, y esa guarda sigue
+     * definida, incluirlo no puede producir nada.  Se sale sin abrirlo siquiera.
+     * Se comprueba que la macro SIGA definida porque un `#undef` por medio
+     * vuelve a hacer significativo el contenido. */
+    {
+        const auto it = m_include_guards.find(ruta);
+        if (it != m_include_guards.end() && m_macros.is_defined(it->second)) {
+            return;
+        }
+    }
+
     // verificar que el archivo no haya sido incluido con #pragma once
     if (m_include_guard_once.count(ruta)) return;
 
@@ -549,6 +641,9 @@ void Preprocessor::eval_include(const IncludeNode& node, std::string& output) {
         if (std::find(m_included_files.begin(), m_included_files.end(), ruta) ==
             m_included_files.end())
             m_included_files.push_back(ruta);
+        /* Se anota su guarda ANTES de evaluarlo: al evaluar se define, y desde
+         * la siguiente inclusion el fichero ya se puede saltar entero. */
+        record_include_guard(ruta, *block);
         eval_block(*block, output);
         m_include_stack.pop_back();
     }

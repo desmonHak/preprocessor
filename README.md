@@ -1622,6 +1622,33 @@ omiten en vez de dar un rojo que no dice nada del codigo.
 
 ---
 
+
+### Rendimiento
+
+Dos cosas dominaban el coste, y las dos se midieron con VTune antes y despues
+(carga: una unidad de C++ con 14 cabeceras estandar, 110782 lineas de salida):
+
+| | reloj | reservas |
+| :-- | --: | --: |
+| de partida | 1283 ms | 15 773 478 |
+| nombres de fichero compartidos | 693 ms | 2 361 047 |
+| + inclusion multiple | **361 ms** | |
+
+**Nombres compartidos.**  Cada token lleva su ubicacion, y la ubicacion guardaba
+el nombre del fichero por valor.  Una ruta de cabecera pasa de los ochenta
+caracteres, no cabe en el buffer pequeno de `std::string` y por tanto reserva
+memoria SIEMPRE: al crear el token y otra vez en cada copia.  Ahora el nombre se
+interna una vez por fichero y la ubicacion guarda un puntero.
+
+**Inclusion multiple.**  Una cabecera protegida con `#ifndef` no puede producir
+nada la segunda vez que se incluye.  Sin esto se abria, leia, tokenizaba y
+parseaba entera para que la guarda la dejara inerte: 623 inclusiones para 220
+ficheros distintos, con una cabecera leida 60 veces.  Ahora se reconoce la
+guarda y se sale sin abrir el fichero, siempre que la macro SIGA definida -- un
+`#undef` por medio vuelve a hacer significativo el contenido.
+
+La salida no cambia, salvo que una cabecera ya incluida deja de aportar sus
+lineas en blanco, igual que en gcc.
 ## Perfilar
 
 Hay una configuracion `Profile`: **Release CON simbolos**, que es la unica que

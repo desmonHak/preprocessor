@@ -238,6 +238,33 @@ private:
     DiagnosticEngine   m_diag;          ///< Motor de diagnosticos
     MacroTable         m_macros;        ///< Tabla de macros activa
     IncludeResolver    m_resolver;      ///< Resolvedor de includes
+
+    /**
+     * @brief Guarda de inclusion de cada fichero que la tiene, por ruta.
+     *
+     * Es la optimizacion de inclusion multiple.  Una cabecera protegida a la
+     * manera clasica
+     *
+     *     #ifndef _GUARDA
+     *     #define _GUARDA
+     *     ...
+     *     #endif
+     *
+     * no puede producir NADA la segunda vez que se incluye, porque su propia
+     * guarda ya esta definida.  Sin esto se abria, leia, tokenizaba y parseaba
+     * entera para que el `#ifndef` la dejara inerte.  Medido sobre una unidad
+     * de C++ real: 624 inclusiones para 220 ficheros distintos, con una
+     * cabecera leida 60 veces.
+     *
+     * `#pragma once` no cubre este caso: las cabeceras del sistema usan la
+     * forma clasica, no el pragma.
+     *
+     * Se anota la guarda al terminar de procesar el fichero y se comprueba
+     * antes de volver a abrirlo.  La comprobacion incluye que la macro SIGA
+     * definida, porque un `#undef` por medio vuelve a hacer significativo el
+     * contenido.
+     */
+    std::unordered_map<std::string, std::string> m_include_guards;
     std::unordered_set<std::string> m_include_guard_once; ///< Archivos con #pragma once
 
     /**
@@ -355,6 +382,19 @@ private:
      * @return La ruta, o vacia si no hay memoria en disco.
      */
     std::string effective_cache_dir() const;
+
+    /**
+     * @brief Anota la guarda de inclusion del fichero recien procesado.
+     *
+     * Solo cuenta si TODO el fichero es un unico `#ifndef X` cuyo primer efecto
+     * es `#define X`, y fuera de el no hay mas que blancos.  Cualquier otra
+     * cosa fuera de la guarda seria contenido que si se emite en cada
+     * inclusion, y saltarse el fichero lo perderia.
+     *
+     * @param path  Ruta resuelta del fichero.
+     * @param block Bloque raiz de su AST.
+     */
+    void record_include_guard(const std::string& path, const BlockNode& block);
 
     /**
      * @brief Dice si un nombre esta definido a efectos de `#ifdef` y `defined`.

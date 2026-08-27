@@ -126,6 +126,90 @@ static void test_include_with_conditional() {
     CHECK(count == 1, "guardia de inclusion manual evita inclusion doble");
 }
 
+
+/**
+ * @brief Un fichero guardado a la manera clasica se procesa una sola vez.
+ *
+ * Es la optimizacion de inclusion multiple: la segunda vez no se abre siquiera,
+ * porque su propia guarda ya esta definida y no podria producir nada.
+ */
+static void test_guarda_clasica_una_sola_vez() {
+    auto pp = make_pp_with_fs({
+        {"g.h", "#ifndef G_H\n#define G_H\nCONTENIDO\n#endif\n"}
+    });
+
+    const std::string out = pp.process(
+        "#include \"g.h\"\n#include \"g.h\"\n#include \"g.h\"\n", "t.c");
+
+    int veces = 0;
+    for (size_t i = out.find("CONTENIDO"); i != std::string::npos;
+         i = out.find("CONTENIDO", i + 1)) ++veces;
+    CHECK(veces == 1, "una cabecera con guarda clasica se procesa una vez");
+}
+
+/**
+ * @brief Lo que esta FUERA de la guarda se emite en cada inclusion.
+ *
+ * Es el limite de la optimizacion, y saltarselo seria perder contenido: el
+ * fichero solo se puede omitir si la guarda lo envuelve TODO.
+ */
+static void test_contenido_fuera_de_la_guarda() {
+    auto pp = make_pp_with_fs({
+        {"f.h", "FUERA\n#ifndef F_H\n#define F_H\nDENTRO\n#endif\n"}
+    });
+
+    const std::string out = pp.process("#include \"f.h\"\n#include \"f.h\"\n",
+                                        "t.c");
+
+    int fuera = 0, dentro = 0;
+    for (size_t i = out.find("FUERA"); i != std::string::npos;
+         i = out.find("FUERA", i + 1)) ++fuera;
+    for (size_t i = out.find("DENTRO"); i != std::string::npos;
+         i = out.find("DENTRO", i + 1)) ++dentro;
+
+    CHECK(fuera == 2, "lo de fuera de la guarda se emite en cada inclusion");
+    CHECK(dentro == 1, "y lo de dentro solo la primera vez");
+}
+
+/**
+ * @brief Un `#undef` de la guarda vuelve a hacer significativo el fichero.
+ *
+ * Sin comprobar que la macro SIGA definida, el fichero se saltaria para siempre
+ * y el contenido no volveria a aparecer.
+ */
+static void test_undef_de_la_guarda() {
+    auto pp = make_pp_with_fs({
+        {"u.h", "#ifndef U_H\n#define U_H\nCUERPO\n#endif\n"}
+    });
+
+    const std::string out = pp.process(
+        "#include \"u.h\"\n#undef U_H\n#include \"u.h\"\n", "t.c");
+
+    int veces = 0;
+    for (size_t i = out.find("CUERPO"); i != std::string::npos;
+         i = out.find("CUERPO", i + 1)) ++veces;
+    CHECK(veces == 2, "tras #undef de la guarda el fichero vuelve a contar");
+}
+
+/**
+ * @brief Una guarda que no define su propio nombre no vale.
+ *
+ * Se veria igual desde fuera -- `#ifndef X` envolviendolo todo -- pero entrar
+ * una segunda vez SI tiene efectos, porque X nunca se define.
+ */
+static void test_guarda_que_no_se_define() {
+    auto pp = make_pp_with_fs({
+        {"n.h", "#ifndef N_H\n#define OTRA_COSA\nCUERPO\n#endif\n"}
+    });
+
+    const std::string out = pp.process("#include \"n.h\"\n#include \"n.h\"\n",
+                                        "t.c");
+
+    int veces = 0;
+    for (size_t i = out.find("CUERPO"); i != std::string::npos;
+         i = out.find("CUERPO", i + 1)) ++veces;
+    CHECK(veces == 2, "una guarda que no define su nombre no se toma por tal");
+}
 /* --- main ----------------------------------------------------------------- */
 
 int main() {
@@ -137,6 +221,10 @@ int main() {
     test_pragma_once_prevents_double_include();
     test_nested_include();
     test_include_with_conditional();
+    test_guarda_clasica_una_sola_vez();
+    test_contenido_fuera_de_la_guarda();
+    test_undef_de_la_guarda();
+    test_guarda_que_no_se_define();
 
     std::cout << "\nResultados: " << tests_passed << " pasados, "
               << tests_failed  << " fallados\n";
