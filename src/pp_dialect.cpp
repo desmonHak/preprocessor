@@ -50,6 +50,22 @@ void apply_setting(const std::string& clave,
         opts.raw_strings = (valor != "0" && valor != "no" && valor != "false");
         return;
     }
+    if (clave == "line-comment") {
+        // Declarar la secuencia la activa; vaciarla es apagarla.  Es lo que se
+        // quiere decir al escribirla, y evita tener que poner dos ajustes.
+        opts.line_comment        = valor;
+        opts.strip_line_comments = !valor.empty();
+        return;
+    }
+    if (clave == "block-comment-open") {
+        opts.block_comment_open   = valor;
+        opts.strip_block_comments = !valor.empty();
+        return;
+    }
+    if (clave == "block-comment-close") {
+        opts.block_comment_close = valor;
+        return;
+    }
     if (clave == "line-comments") {
         opts.strip_line_comments =
             (valor != "0" && valor != "no" && valor != "false");

@@ -216,6 +216,73 @@ static void test_comillas_por_omision() {
           "por omision una cadena protege su contenido");
     CHECK(g_errores == 0, "sin errores");
 }
+
+/* --- comentarios propios del lenguaje ------------------------------------- */
+
+/**
+ * @brief Declarar el comentario de linea hace que se respete de verdad.
+ *
+ * Apagarlo solo evitaba que `//` se comiera texto ajeno, pero el comentario del
+ * lenguaje seguia saliendo como texto corriente -- y por tanto una macro
+ * mencionada dentro SI se expandia.  Declararlo es lo que lo convierte en un
+ * comentario para vpp.
+ */
+static void test_comentario_de_linea_propio() {
+    const std::string out = pp(
+        "-- vpp:marker=% line-comment=--\n"
+        "%define N 9\n"
+        "-- comentario que menciona N\n"
+        "local x = N\n");
+
+    CHECK(!contains(out, "comentario que menciona"),
+          "el comentario del lenguaje se descarta");
+    CHECK(contains(out, "local x = 9"),
+          "y el codigo de fuera si se expande");
+    CHECK(g_errores == 0, "sin errores");
+}
+
+/**
+ * @brief El de bloque tambien, y se mira ANTES que el de linea.
+ *
+ * En Lua `--[[` abre bloque y `--` abre linea, asi que el de linea es prefijo
+ * del de bloque: comprobandolo primero se quedaria con la apertura y el resto
+ * del comentario saldria como texto, con sus macros expandidas.
+ */
+static void test_comentario_de_bloque_propio() {
+    const std::string out = pp(
+        "-- vpp:marker=% line-comment=-- block-comment-open=--[[ block-comment-close=]]\n"
+        "%define N 9\n"
+        "--[[ bloque\n"
+        "que menciona N ]]\n"
+        "local x = N\n");
+
+    CHECK(!contains(out, "que menciona"),
+          "el bloque entero se descarta, aunque abra igual que una linea");
+    CHECK(contains(out, "local x = 9"), "y lo de fuera se expande");
+    CHECK(g_errores == 0, "sin errores");
+}
+
+/**
+ * @brief Con otro comentario declarado, el de C deja de serlo.
+ *
+ * En Lua `//` es division entera.
+ */
+static void test_las_de_c_dejan_de_contar() {
+    const std::string out = pp(
+        "-- vpp:marker=% line-comment=--\n"
+        "local y = 7 // 2\n");
+    CHECK(contains(out, "7 // 2"),
+          "con otro comentario declarado, // vuelve a ser texto");
+}
+
+/** @brief Por omision siguen siendo los de C. */
+static void test_por_omision_las_de_c() {
+    const std::string out = pp(
+        "#define M 3\n// linea con M\n/* bloque con M */\nint x = M;\n");
+    CHECK(!contains(out, "linea con"),  "// sigue comentando por omision");
+    CHECK(!contains(out, "bloque con"), "y /* */ tambien");
+    CHECK(contains(out, "int x = 3;"),  "y el codigo se expande");
+}
 /* --- alcance -------------------------------------------------------------- */
 
 /**
@@ -273,6 +340,10 @@ int main() {
     test_comilla_suelta_en_texto();
     test_directivas_conservan_sus_cadenas();
     test_comillas_por_omision();
+    test_comentario_de_linea_propio();
+    test_comentario_de_bloque_propio();
+    test_las_de_c_dejan_de_contar();
+    test_por_omision_las_de_c();
     test_dialecto_por_fichero();
 
     std::cout << "\nResultados: " << tests_passed << " pasados, "

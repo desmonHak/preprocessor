@@ -36,6 +36,23 @@ struct LexerOptions {
 
     bool strip_line_comments  = true;  ///< Ignorar comentarios de linea //
     bool strip_block_comments = true;  ///< Ignorar comentarios de bloque /* */
+
+    /**
+     * @brief Secuencia que abre un comentario de linea.
+     *
+     * `//` es la de C, y por eso es la de por omision, pero no es universal:
+     * Lua y SQL usan `--`, Python y shell `#`, Lisp `;`.  Poder declararla
+     * -- y no solo apagar la de C -- es lo que hace que vpp entienda de verdad
+     * los comentarios de otro lenguaje en lugar de dejarlos pasar como texto,
+     * donde una macro que se mencione dentro SI se expandiria.
+     */
+    std::string line_comment       = "//";
+
+    /** @brief Secuencia que abre un comentario de bloque (`/ *` en C). */
+    std::string block_comment_open  = "/*";
+
+    /** @brief Secuencia que lo cierra (`* /` en C). */
+    std::string block_comment_close = "*/";
     bool keep_whitespace      = false; ///< Preservar tokens WHITESPACE en directivas
     /**
      * @brief Reconocer cadenas crudas de C++ (`R"delim( ... )delim"`).
@@ -148,6 +165,13 @@ private:
      * @return true si m_pos >= m_src.size().
      */
     bool at_end() const noexcept;
+
+    /**
+     * @brief Indica si en la posicion actual empieza la secuencia dada.
+     * @param s Secuencia a comparar.
+     * @return true si el texto que viene empieza por ella.
+     */
+    bool matches_ahead(const std::string& s) const;
 
     /**
      * @brief Devuelve la ubicacion actual como SourceLocation.

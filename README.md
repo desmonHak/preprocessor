@@ -338,6 +338,9 @@ ajustes que admite la declaracion:
 | `marker=X` | Que empieza una directiva | `#` es comentario en Python, shell, Ruby, Make |
 | `line-comments=0` | `//` deja de comentar | En Lua es division entera: `7 // 2` perdia el `// 2` **sin avisar** |
 | `block-comments=0` | `/* */` deja de comentar | Lenguajes que no los tienen |
+| `line-comment=SEQ` | Declara el comentario de linea del lenguaje | `--` en Lua y SQL, `;` en Lisp |
+| `block-comment-open=SEQ` | Y el de bloque | `--[[` en Lua |
+| `block-comment-close=SEQ` | Su cierre | `]]` en Lua |
 | `strings=0` | `"` deja de abrir cadena | Texto llano, o donde la comilla no delimite |
 | `char-literals=0` | `'` deja de abrir caracter | Un apostrofo: `It's a test` fallaba con "literal sin cerrar" |
 | `raw-strings=0` | `R"(...)"` deja de ser cruda | Donde un nombre pueda ir pegado a una comilla |
@@ -346,6 +349,23 @@ ajustes que admite la declaracion:
 -- vpp:marker=% line-comments=0
 local n = 7 // 2            -- la division sobrevive
 ```
+
+Apagar un comentario y **declarar** el propio no es lo mismo.  Apagado, el
+comentario del lenguaje sale como texto corriente, asi que una macro mencionada
+dentro SI se expande.  Declarado, vpp lo descarta como lo que es:
+
+```lua
+-- vpp:marker=% line-comment=-- block-comment-open=--[[ block-comment-close=]]
+%define N 9
+-- este comentario menciona N y no se toca
+--[[ el bloque
+tampoco ]]
+local x = N          -- aqui si: queda 9
+local y = 7 // 2     -- y // vuelve a ser division entera
+```
+
+El de bloque se comprueba antes que el de linea, que es lo que hace falta cuando
+uno es prefijo del otro -- en Lua `--[[` abre bloque y `--` abre linea.
 
 Estos ajustes hablan del **texto del lenguaje de destino**.  Dentro de una
 directiva rige siempre la sintaxis de vpp, asi que `#include "fichero.h"` sigue

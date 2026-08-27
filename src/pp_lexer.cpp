@@ -230,18 +230,23 @@ void PPLexer::scan_directive_line(std::vector<PPToken>& out) {
             out.emplace_back(PPTokenType::WHITESPACE, std::move(ws), wl);
             continue;
         }
-        // manejar comentarios de linea
-        if (peek() == '/' && peek(1) == '/' && m_opts.strip_line_comments) {
-            skip_line_comment();
-            break;
-        }
-        // manejar comentarios de bloque
-        if (peek() == '/' && peek(1) == '*' && m_opts.strip_block_comments) {
+        /* El de BLOQUE se mira antes que el de linea.
+         *
+         * En C da igual -- ni `/ *` ni `//` es prefijo del otro -- pero en Lua
+         * el bloque abre con `--[[` y la linea con `--`, asi que al reves la
+         * regla de linea se quedaba con la apertura del bloque y el resto del
+         * comentario salia a la salida como texto, con sus macros expandidas. */
+        if (m_opts.strip_block_comments && matches_ahead(m_opts.block_comment_open)) {
             // Mismas lineas que ocupaba, repuestas (ver scan_text_line).
             const size_t saltos = skip_block_comment();
             for (size_t k = 0; k < saltos; ++k)
                 out.emplace_back(PPTokenType::TEXT, "\n", loc());
             continue;
+        }
+        // manejar comentarios de linea
+        if (m_opts.strip_line_comments && matches_ahead(m_opts.line_comment)) {
+            skip_line_comment();
+            break;
         }
         // escanear el siguiente token no-espacio
         out.push_back(next_directive_token_nosp());
@@ -270,14 +275,9 @@ void PPLexer::scan_text_line(std::vector<PPToken>& out) {
     };
 
     while (!at_end() && peek() != '\n') {
-        // manejar comentarios de linea
-        if (peek() == '/' && peek(1) == '/' && m_opts.strip_line_comments) {
-            flush_text();
-            skip_line_comment();
-            break;
-        }
-        // manejar comentarios de bloque
-        if (peek() == '/' && peek(1) == '*' && m_opts.strip_block_comments) {
+        /* El de BLOQUE se mira antes que el de linea: ver la explicacion en
+         * scan_directive_line.  En Lua `--[[` abre bloque y `--` abre linea. */
+        if (m_opts.strip_block_comments && matches_ahead(m_opts.block_comment_open)) {
             flush_text();
             const size_t saltos = skip_block_comment();
             /* Las lineas que ocupaba el comentario se reponen vacias.  El
@@ -289,6 +289,12 @@ void PPLexer::scan_text_line(std::vector<PPToken>& out) {
             // el comentario de bloque puede continuar en la linea, no hacemos break
             text_start = loc();
             continue;
+        }
+        // manejar comentarios de linea
+        if (m_opts.strip_line_comments && matches_ahead(m_opts.line_comment)) {
+            flush_text();
+            skip_line_comment();
+            break;
         }
         // manejar continuacion de linea
         if (peek() == '\\' && peek(1) == '\n') {
@@ -672,6 +678,21 @@ PPToken PPLexer::scan_angle_string() {
     return PPToken(PPTokenType::ANGLE_STRING, std::move(s), l);
 }
 
+
+/**
+ * @brief Indica si en la posicion actual empieza la secuencia dada.
+ *
+ * Existe porque las secuencias de comentario dejaron de ser dos caracteres
+ * fijos: pueden tener uno (`;` de Lisp) o cuatro (`--[[` de Lua).
+ *
+ * @param s Secuencia a comparar; vacia nunca casa.
+ * @return true si el texto que viene empieza por ella.
+ */
+bool PPLexer::matches_ahead(const std::string& s) const {
+    if (s.empty()) return false;
+    if (m_pos + s.size() > m_src.size()) return false;
+    return m_src.compare(m_pos, s.size(), s) == 0;
+}
 void PPLexer::skip_line_comment() {
     // avanza hasta el fin de la linea sin consumir el '\n'
     while (!at_end() && peek() != '\n') {
@@ -691,12 +712,17 @@ void PPLexer::skip_line_comment() {
 size_t PPLexer::skip_block_comment() {
     SourceLocation start = loc();
     size_t saltos = 0;
-    advance(); // consume '/'
-    advance(); // consume '*'
+
+    // Las secuencias son las del dialecto: `/ *` y `* /` en C, `--[[` y `]]` en
+    // Lua.  Pueden tener otra longitud, asi que se consumen por su tamano en vez
+    // de dar por hecho dos caracteres.
+    const std::string& abre  = m_opts.block_comment_open;
+    const std::string& cierra = m_opts.block_comment_close;
+    for (std::size_t i = 0; i < abre.size(); ++i) advance();
+
     while (!at_end()) {
-        if (peek() == '*' && peek(1) == '/') {
-            advance(); // '*'
-            advance(); // '/'
+        if (matches_ahead(cierra)) {
+            for (std::size_t i = 0; i < cierra.size(); ++i) advance();
             return saltos;
         }
         if (peek() == '\n') ++saltos;
