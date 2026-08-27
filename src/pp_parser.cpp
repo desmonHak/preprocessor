@@ -29,9 +29,6 @@ PPParser::PPParser(std::vector<PPToken> tokens, DiagnosticEngine& diag)
 {}
 
 NodePtr PPParser::parse() {
-    SourceLocation root_loc = m_toks.empty()
-        ? SourceLocation()
-        : m_toks[0].loc;
     return parse_block();
 }
 

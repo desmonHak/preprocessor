@@ -14,8 +14,8 @@ namespace vpp {
 
 std::string SourceLocation::to_string() const {
     std::ostringstream oss;
-    if (!file.empty()) {
-        oss << file << ':';
+    if (!file().empty()) {
+        oss << file() << ':';
     }
     oss << line << ':' << col;
     return oss.str();

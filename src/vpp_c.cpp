@@ -346,7 +346,7 @@ extern "C" VPP_API vpp_status vpp_diagnostic_at(const vpp_preprocessor* pp,
     out->level   = to_c_level(d.level);
     // punteros prestados al almacenamiento de los std::string del motor: viven
     // mientras el handle no procese otra unidad ni se destruya
-    out->file    = d.loc.file.c_str();
+    out->file    = d.loc.file().c_str();
     out->line    = d.loc.line;
     out->col     = d.loc.col;
     out->message = d.message.c_str();

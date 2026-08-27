@@ -348,7 +348,7 @@ void Preprocessor::eval_node(const ASTNode& node, std::string& output) {
             if (!n.args.empty() && n.args[0].value == "once") {
                 // usar la pila de includes para identificar el archivo actual con certeza
                 const std::string& guard_key = m_include_stack.empty()
-                    ? n.loc.file
+                    ? n.loc.file()
                     : m_include_stack.back().path;
                 m_include_guard_once.insert(guard_key);
             }
@@ -366,7 +366,8 @@ void Preprocessor::eval_node(const ASTNode& node, std::string& output) {
             m_line_remap_active = true;
             m_line_base_phys    = n.loc.line + 1;
             m_line_base_rep     = n.line_num;
-            if (!n.filename.empty()) m_line_remap_file = n.filename;
+            if (!n.filename.empty())
+                m_line_remap_file = intern_file_name(n.filename);
 
             // emitir marcador de linea si esta habilitado
             if (m_opts.emit_line_markers) {
@@ -416,7 +417,7 @@ SourceLocation Preprocessor::mapped_position(const SourceLocation& real) const {
     if (!m_line_remap_active) return real;
 
     SourceLocation out = real;
-    if (!m_line_remap_file.empty()) out.file = m_line_remap_file;
+    if (m_line_remap_file) out.file_name = m_line_remap_file;
     // diferencia respecto al punto donde se instalo el remapeo
     out.line = m_line_base_rep + (real.line - m_line_base_phys);
     return out;
@@ -434,7 +435,7 @@ void Preprocessor::eval_text(const TextNode& node, std::string& output) {
     // porque es la unidad que corresponde a una linea del fuente, y pasa por
     // el remapeo para que un `#line` en vigor se note.
     const SourceLocation pos = mapped_position(node.loc);
-    m_macros.set_source_position(pos.file, pos.line);
+    m_macros.set_source_position(pos.file(), pos.line);
 
     // expansion de macros: los tokens IDENT son candidatos a expansion
     auto expanded = m_macros.expand(node.tokens, node.loc);
@@ -556,7 +557,7 @@ void Preprocessor::eval_include(const IncludeNode& node, std::string& output) {
         output += "#line ";
         output += std::to_string(node.loc.line + 1);
         output += " \"";
-        output += node.loc.file;
+        output += node.loc.file();
         output += "\"\n";
     }
 }
@@ -699,7 +700,7 @@ bool Preprocessor::eval_condition(const std::vector<PPToken>& tokens,
                                    const SourceLocation& loc) {
     // una condicion puede usar __LINE__, asi que tambien necesita la posicion
     const SourceLocation pos = mapped_position(loc);
-    m_macros.set_source_position(pos.file, pos.line);
+    m_macros.set_source_position(pos.file(), pos.line);
     PPEvaluator eval(m_macros, m_diag,
         [this](const std::string& op, const std::string& arg) {
             return resolve_capability(op, arg);
@@ -715,7 +716,7 @@ ResolvedInclude Preprocessor::resolve_include(const IncludeNode& node) {
 
     // si hay un resolvedor personalizado, usarlo primero
     if (m_resolver) {
-        std::string content = m_resolver(node.loc.file, node.path, node.is_system);
+        std::string content = m_resolver(node.loc.file(), node.path, node.is_system);
         if (!content.empty()) {
             // Lo que sirve un resolvedor del usuario no tiene por que existir en
             // el disco, asi que no hay directorio del que colgar un vecino ni
@@ -748,7 +749,7 @@ ResolvedInclude Preprocessor::resolve_include(const IncludeNode& node) {
     // El fichero desde el que se busca es el que esta en curso, con su ruta
     // RESUELTA.  La que trae el nodo es la que se escribio en la directiva, y
     // el vecino de una cabecera esta al lado de donde ESA cabecera aparecio.
-    const std::string desde = m_include_stack.empty() ? node.loc.file
+    const std::string desde = m_include_stack.empty() ? node.loc.file()
                                                       : m_include_stack.back().path;
 
     // Un #include_next reanuda justo despues del directorio en el que aparecio
@@ -772,7 +773,7 @@ void Preprocessor::eval_array_def(const ArrayDefNode& node) {
 
 void Preprocessor::eval_exec(const ExecDirNode& node) {
     // expandir el comando antes de ejecutarlo (permite usar macros en el nombre)
-    PPLexer cmd_lex(node.command, node.loc.file, m_diag, m_opts.lexer);
+    PPLexer cmd_lex(node.command, node.loc.file(), m_diag, m_opts.lexer);
     auto cmd_toks  = cmd_lex.tokenize();
     auto expanded  = m_macros.expand(cmd_toks, node.loc);
     std::string cmd;

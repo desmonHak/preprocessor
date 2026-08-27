@@ -91,7 +91,7 @@ static std::string normalizar_saltos(std::string s) {
 PPLexer::PPLexer(std::string source, std::string filename,
                  DiagnosticEngine& diag, LexerOptions opts)
     : m_src(normalizar_saltos(std::move(source)))
-    , m_file(std::move(filename))
+    , m_file(intern_file_name(filename))
     , m_diag(diag)
     , m_opts(opts)
     , m_pos(0)
@@ -300,7 +300,6 @@ void PPLexer::scan_text_line(std::vector<PPToken>& out) {
         // identificadores: candidatos a expansion de macro
         if (std::isalpha((unsigned char)peek()) || peek() == '_') {
             flush_text();
-            SourceLocation id_loc = loc();
             out.push_back(scan_ident());
             text_start = loc();
             continue;

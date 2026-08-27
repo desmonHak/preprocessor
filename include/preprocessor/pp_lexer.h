@@ -61,7 +61,14 @@ public:
 
 private:
     std::string       m_src;    ///< Texto fuente completo
-    std::string       m_file;   ///< Nombre del archivo
+    /**
+     * @brief Nombre del archivo, ya compartido.
+     *
+     * Se interna UNA vez al construir el lexer y desde ahi cada token recibe el
+     * mismo puntero.  Guardarlo por valor obligaba a copiar la ruta en cada
+     * ubicacion, y eso es una reserva de memoria por token.
+     */
+    const std::string* m_file;
     DiagnosticEngine& m_diag;   ///< Motor de diagnosticos
     LexerOptions      m_opts;   ///< Opciones del lexer
     size_t            m_pos;    ///< Posicion actual en m_src

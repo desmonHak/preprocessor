@@ -279,7 +279,14 @@ private:
     bool        m_line_remap_active = false; ///< Hay un #line en vigor
     uint32_t    m_line_base_phys    = 0;     ///< Linea fisica donde empieza
     uint32_t    m_line_base_rep     = 0;     ///< Linea reportada equivalente
-    std::string m_line_remap_file;           ///< Fichero reportado, si se dio
+    /**
+     * @brief Fichero reportado por `#line`, ya compartido; nulo si no se dio.
+     *
+     * Es un puntero al pozo y no una cadena porque mapped_position se llama por
+     * linea: internar alli tomaria el cerrojo constantemente.  Se interna una
+     * vez, al procesar la directiva.
+     */
+    const std::string* m_line_remap_file = nullptr;
 
     /**
      * @brief Traduce una posicion real a la que debe reportarse.
