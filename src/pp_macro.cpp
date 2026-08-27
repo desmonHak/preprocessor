@@ -1749,7 +1749,68 @@ static std::vector<PPToken> expand_impl(
                 continue;
             }
 
+            const std::string nombre_previo = tokens[pos].value;
             auto exp = expand_one_impl(tokens, pos, table, guard);
+
+            // Reescaneo con lo que VIENE DETRAS.
+            //
+            // El estandar manda releer el resultado de una expansion junto con
+            // los tokens que le siguen en el fuente, no solo por su cuenta.
+            // Aqui se emitia el resultado directamente a la salida, con lo que
+            // un nombre de macro funcion PRODUCIDO por una expansion ya no se
+            // encontraba nunca con los parentesis que tenia al lado.
+            //
+            // Es justo el idioma con el que las cabeceras eligen macro segun el
+            // numero de argumentos:
+            //
+            //     #define F(...) ELIGE(__VA_ARGS__, F3, F2, F1)(__VA_ARGS__)
+            //
+            // donde `ELIGE(...)` produce el NOMBRE y los parentesis que le
+            // siguen son sus argumentos.  Sin el reescaneo la salida se quedaba
+            // en `F2(a, b)` sin expandir; asi moria el <stdio.h> de macOS, que
+            // lo usa para `__API_AVAILABLE`.
+            //
+            // Cada vuelta consume al menos la llamada que acaba de leer, asi
+            // que esto termina siempre; y el nombre reaparecido se comprueba
+            // contra el guard, de modo que una macro no puede reentrar en si
+            // misma por esta via.
+            if (!exp.empty() && exp.back().type == PPTokenType::IDENT &&
+                !guard.count(exp.back().value)) {
+                const MacroDef* siguiente = table.get(exp.back().value);
+                size_t k = pos;
+                while (k < tokens.size() &&
+                       tokens[k].type == PPTokenType::WHITESPACE) ++k;
+
+                if (siguiente && siguiente->is_function &&
+                    k < tokens.size() &&
+                    tokens[k].type == PPTokenType::LPAREN) {
+                    // El nombre y los tokens que le siguen se releen JUNTOS.
+                    std::vector<PPToken> resto;
+                    resto.reserve(1 + tokens.size() - pos);
+                    resto.push_back(exp.back());
+                    resto.insert(resto.end(),
+                                 tokens.begin() + static_cast<std::ptrdiff_t>(pos),
+                                 tokens.end());
+                    exp.pop_back();
+
+                    result.insert(result.end(), exp.begin(), exp.end());
+                    // La macro que se acaba de expandir sigue OCULTA mientras
+                    // se relee.  Es la regla de la pintura azul del estandar:
+                    // los tokens que salen de expandir `R` llevan `R` tapado
+                    // consigo, asi que `#define R(x) R` con `R(1)(2)` da
+                    // `R(2)` y no vuelve a entrar en R.  El guard normal ya se
+                    // habia levantado al volver de la expansion, de modo que
+                    // sin esto la reentrada era posible por esta via.
+                    const bool ya_oculta = guard.count(nombre_previo) != 0;
+                    guard[nombre_previo] = true;
+                    auto releido = expand_impl(resto, table, guard);
+                    if (!ya_oculta) guard.erase(nombre_previo);
+                    result.insert(result.end(), releido.begin(), releido.end());
+                    pos = tokens.size();
+                    continue;
+                }
+            }
+
             result.insert(result.end(), exp.begin(), exp.end());
         } else {
             result.push_back(tokens[pos++]);

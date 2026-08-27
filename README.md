@@ -114,6 +114,19 @@ estandar para conseguirlo:
 EMPAQUETAR(pack(1))    // -> #pragma pack(1)
 ```
 
+**Reescaneo.**  El resultado de expandir una macro se relee junto con los
+tokens que le SIGUEN, no solo por su cuenta.  Es lo que hace funcionar el
+idioma con el que se elige macro segun el numero de argumentos:
+
+```
+#define ELIGE(_1,_2,_3,NOMBRE,...) NOMBRE
+#define F(...) ELIGE(__VA_ARGS__, F3, F2, F1)(__VA_ARGS__)
+```
+
+`ELIGE(...)` produce el NOMBRE, y los parentesis que quedan a su lado son sus
+argumentos.  La macro que se acaba de expandir queda oculta mientras se relee,
+de modo que `#define R(x) R` con `R(1)(2)` da `R(2)` en vez de reentrar en R.
+
 **Aritmetica de `#if`** con las conversiones de C: si cualquiera de los
 operandos es sin signo, la operacion entera lo es.  Eso cambia resultados de
 forma poco intuitiva y conviene no olvidarlo:
@@ -1485,7 +1498,7 @@ que el estandar **exige**, y por eso podian estar en verde mientras
 
 | Suite | Que mide |
 | :---- | :------- |
-| `vpp_test_conformance` | 45 casos preprocesados con vpp y con `gcc`/`clang`, comparando las salidas |
+| `vpp_test_conformance` | 46 casos preprocesados con vpp y con `gcc`/`clang`, comparando las salidas |
 | `vpp_test_system_headers` | Preprocesa un fuente con cabeceras de C del sistema, **compila** la salida y **ejecuta** el binario |
 | `vpp_test_system_headers_cxx` | Lo mismo con `<string>`, `<vector>`, `<algorithm>` e `<iostream>`: es el unico sitio donde `#include_next` y los operadores de prueba de caracteristicas se ejercitan de verdad |
 
@@ -1498,7 +1511,7 @@ Los casos que se sepa que fallan van en `tests/conformance/xfail.txt` con la
 explicacion de que falla.  Uno listado que falla no rompe la suite; uno que
 **pasa** se reporta como XPASS y si la rompe, para obligar a sacarlo de la lista
 al arreglar el bug.  Asi el fichero no puede quedarse mintiendo sobre el estado
-real.  Ahora mismo la lista esta vacia: 45/45.
+real.  Ahora mismo la lista esta vacia: 46/46.
 
 Las tres se registran solo si hay un compilador de referencia; sin el se
 omiten en vez de dar un rojo que no dice nada del codigo.
