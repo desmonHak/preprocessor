@@ -1487,6 +1487,11 @@ exporta UNICAMENTE el ABI en C.  Es la invariante que sostiene el diseno, y no
 es una precaucion teorica: en ELF ya se colaron nueve plantillas de libstdc++
 pese a tener la visibilidad oculta, y por eso hizo falta el version script.
 
+La matriz no es decorativa: los tres huecos de conformidad que quedaban -- el
+shim de `__has_builtin`, los operadores que solo existen en un modo y el
+reescaneo -- los encontro `macos-clang`, y ninguno se veia en Linux ni en
+Windows.  Las cabeceras de cada sistema aprietan por sitios distintos.
+
 ---
 
 ### Conformidad con el preprocesador de C
