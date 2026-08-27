@@ -675,12 +675,15 @@ void Preprocessor::eval_include(const IncludeNode& node, std::string& output) {
                          hallado.search_index});
         /* Y ademas se APUNTA, que no es lo mismo: la pila se vacia al salir y
          * esto tiene que sobrevivir a todo el preproceso.  Es lo que permite
-         * que un cache sepa que este fuente depende de aquel fichero.  Se
-         * comprueba antes de anadir porque el mismo se puede incluir desde
-         * varios sitios y la lista es para consultarla, no para contar. */
-        if (std::find(m_included_files.begin(), m_included_files.end(), ruta) ==
+         * que un cache sepa que este fuente depende de aquel fichero, y es lo
+         * que se emite como lista de dependencias.  Se apunta la ruta RESUELTA:
+         * la escrita no le sirve a nadie de fuera, porque depende de desde donde
+         * se incluyera.  Se comprueba antes de anadir porque el mismo se puede
+         * incluir desde varios sitios y la lista es para consultarla, no para
+         * contar. */
+        if (std::find(m_included_files.begin(), m_included_files.end(), clave) ==
             m_included_files.end())
-            m_included_files.push_back(ruta);
+            m_included_files.push_back(clave);
         /* Se anota su guarda ANTES de evaluarlo: al evaluar se define, y desde
          * la siguiente inclusion el fichero ya se puede saltar entero. */
         record_include_guard(clave, *block);

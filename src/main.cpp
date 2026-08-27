@@ -17,6 +17,7 @@
  */
 
 #include "preprocessor/preprocessor.h"
+#include "preprocessor/pp_deps.h"
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -46,6 +47,13 @@ static void print_help(const char* prog) {
         << "  --cache-dir <d>   Donde recordar lo que contesta el compilador\n"
         << "                    (por omision, la cache del usuario)\n"
         << "  --no-cache        No recuerda nada entre ejecuciones\n"
+        << "  --deps            Emite la lista de dependencias en formato make\n"
+        << "                    en lugar de la salida (el -M de cc, que aqui ya\n"
+        << "                    significa ruta de #import)\n"
+        << "  -MD               Emite las dependencias ADEMAS de la salida\n"
+        << "  -MF <f>           Escribe las dependencias en ese fichero\n"
+        << "  -MT <t>           Nombre del objetivo de la regla\n"
+        << "  -MP               Anade una regla vacia por dependencia\n"
         << "  --marker <s>      Que marca una directiva (por omision '#');\n"
         << "                    el fichero puede decirlo con 'vpp:marker=s'\n"
         << "  --line-markers    Emite marcadores #line tras cada #include\n"
@@ -115,6 +123,10 @@ int main(int argc, char* argv[]) {
     std::string capabilities_cmd;
     std::string cache_dir;
     std::string marker;
+    bool        emitir_deps = false;
+    bool        solo_deps   = false;
+    std::string deps_file;
+    vpp::DepsOptions deps_opts;
     bool        use_cache = true;
     std::vector<std::string> include_paths;
     std::vector<std::string> import_paths;
@@ -160,6 +172,41 @@ int main(int argc, char* argv[]) {
             } else if (i + 1 < argc) {
                 include_paths.push_back(argv[++i]);
             }
+            continue;
+        }
+        /* --- dependencias para el build ---
+         *
+         * Se miran ANTES que `-M`, que en vpp es una ruta de busqueda para
+         * `#import` y ademas casa por PREFIJO: sin esto se tragaria `-MD`,
+         * `-MF` y compania como si fueran rutas.  Al exigir coincidencia exacta
+         * aqui, una ruta escrita `-MDocs` sigue funcionando como siempre; solo
+         * chocaria una que se llamase exactamente D, F, T o P.
+         *
+         * Los nombres son los de cc para que un build system los emita tal
+         * cual.  El unico que no se puede reusar es el `-M` a secas, que ya
+         * estaba cogido; su equivalente es `--deps`. */
+        if (std::strcmp(argv[i], "--deps") == 0) {
+            emitir_deps = true;
+            solo_deps   = true;
+            continue;
+        }
+        if (std::strcmp(argv[i], "-MD") == 0) {
+            emitir_deps = true;
+            continue;
+        }
+        if (std::strcmp(argv[i], "-MF") == 0 && i + 1 < argc) {
+            deps_file   = argv[++i];
+            emitir_deps = true;
+            continue;
+        }
+        if (std::strcmp(argv[i], "-MT") == 0 && i + 1 < argc) {
+            deps_opts.target = argv[++i];
+            emitir_deps      = true;
+            continue;
+        }
+        if (std::strcmp(argv[i], "-MP") == 0) {
+            deps_opts.phony_targets = true;
+            emitir_deps             = true;
             continue;
         }
         if (std::strncmp(argv[i], "-M", 2) == 0) {
@@ -290,8 +337,32 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // --- lista de dependencias ---
+    //
+    // Se escribe antes que la salida para que, con `-M`, lo que llegue a stdout
+    // sea SOLO la regla: es lo que espera quien la canaliza a un fichero.
+    if (emitir_deps) {
+        const std::string regla = vpp::format_make_deps(
+            output_file, input_file, pp.included_files(), deps_opts);
+
+        if (deps_file.empty()) {
+            std::cout << regla;
+        } else {
+            std::ofstream dfs(deps_file, std::ios::binary);
+            if (!dfs) {
+                std::cerr << "vpp: no se puede crear el fichero de "
+                             "dependencias: " << deps_file << '\n';
+                return 1;
+            }
+            dfs << regla;
+        }
+    }
+
     // --- escribir la salida ---
-    if (output_file.empty()) {
+//    // Con `-M` no hay salida: lo unico que se pide es la regla.  Es asi en cc    // y es lo que hace que se pueda canalizar sin filtrar nada.
+    if (solo_deps) {
+        // nada que emitir
+    } else if (output_file.empty()) {
         std::cout << result;
     } else {
         std::ofstream ofs(output_file, std::ios::binary);

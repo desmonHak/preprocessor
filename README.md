@@ -1126,6 +1126,10 @@ vpp -I ./include -I /usr/local/vesta/include archivo.vel
 # Marcador de directiva para un fichero que no se puede tocar
 vpp --marker % generado.py
 
+# Lista de dependencias para make o ninja
+vpp --deps -I include main.c
+vpp -MD -MF build/main.d -I include main.c -o build/main.i
+
 # Leer desde stdin
 echo "#define X 1\nX" | vpp --stdin
 
@@ -1262,6 +1266,49 @@ __has_builtin __builtin_expect	1
 Para limpiarla, se borra el directorio.  La version del formato va en el nombre
 (`v1/`), asi que un cambio de formato deja lo viejo donde esta en lugar de
 leerlo mal.
+
+---
+
+## Dependencias para el build
+
+Un build incremental necesita saber que rehacer cuando cambia una cabecera.  vpp
+emite la lista en el formato de `cc`, asi que sirve tal cual a make y a ninja:
+
+```bash
+# Solo la regla, sin preprocesar a la salida
+vpp --deps -I include main.c
+main.o: main.c include/a.h include/b.h
+
+# La salida normal Y las dependencias en un fichero
+vpp -MD -MF build/main.d -I include main.c -o build/main.i
+
+# Objetivo propio y objetivos ficticios
+vpp --deps -MT build/main.o -MP -I include main.c
+```
+
+| Opcion | Que hace |
+| :----- | :------- |
+| `--deps` | Emite solo la regla, sin la salida preprocesada |
+| `-MD` | Emite la regla ADEMAS de la salida |
+| `-MF <f>` | Escribe la regla en ese fichero en vez de en la salida |
+| `-MT <t>` | Nombre del objetivo (por omision, el fichero de salida) |
+| `-MP` | Anade una regla vacia por cada dependencia |
+
+`-MP` esta para que borrar una cabecera no rompa el build: sin esas reglas, make
+lee la lista vieja, ve un fichero que ya no esta y se para -- cuando en realidad
+ya no hace falta, porque el fuente dejo de incluirlo.  El fuente principal se
+queda fuera a proposito: si ESE falta, pararse es lo correcto.
+
+Las rutas son las RESUELTAS, que son las unicas que le sirven a make, y salen
+con barras normales aunque sean de Windows, porque en un Makefile la barra
+invertida es un escape.  El espacio y el dolar van escapados por lo mismo.
+
+> **Por que `--deps` y no `-M`.**  En cc, `-M` es esto.  En vpp `-M` ya era la
+> ruta de busqueda de `#import`, y romperlo habria dejado de funcionar en
+> silencio a quien lo usara.  Los demas nombres si son los de cc, de modo que un
+> build system los emite tal cual; solo hay que traducir ese.
+
+Comprobado contra `gcc -M`: la salida es identica byte a byte, con y sin `-MP`.
 ---
 
 ## Uso como biblioteca (C++ API)
@@ -1665,6 +1712,7 @@ ctest --output-on-failure -V
 ./vpp_test_compiler_id     ; identidad del compilador
 ./vpp_test_facts_cache     ; memoria entre ejecuciones
 ./vpp_test_dialect         ; marcador de directiva por fichero
+./vpp_test_deps            ; lista de dependencias para el build
 ```
 
 ### Integracion continua
@@ -1741,6 +1789,7 @@ omiten en vez de dar un rojo que no dice nada del codigo.
 | `vpp_test_c_api`       | El ABI en C completo: handles, diagnosticos, propiedad de la memoria |
 | `vpp_test_include_search` | Busqueda de inclusiones: precedencia de rutas, vecino relativo, `#include_next` |
 | `vpp_test_dialect`     | Marcador de directiva declarado en el fichero, y que una errata siga siendo error |
+| `vpp_test_deps`        | Lista de dependencias: objetivo, escapado, partido de lineas y objetivos ficticios |
 | `vpp_test_compiler_id` | Identificacion del compilador: extraer el ejecutable, buscarlo por el PATH, y que la huella cambie al cambiar el binario o los flags |
 | `vpp_test_facts_cache` | Memoria entre ejecuciones: persistencia, separacion por compilador, fusion de escrituras y lo que se niega a guardar |
 
@@ -1837,6 +1886,7 @@ preprocessor/
 |       +-- pp_evaluator.h    evaluador de expresiones #if
 |       +-- pp_include.h      busqueda de #include, #include_next e #import
 |       +-- pp_dialect.h       el marcador de directiva que declara el fichero
+|       +-- pp_deps.h          lista de dependencias en formato de make
 |       +-- pp_name_pool.h     nombres de fichero compartidos entre ubicaciones
 |       +-- pp_capabilities.h consulta al compilador objetivo para __has_*
 |       +-- pp_system.h        entorno y rutas de plataforma
@@ -1853,6 +1903,7 @@ preprocessor/
 |   +-- pp_macro.cpp          incluye registro de macros funcion integradas
 |   +-- pp_evaluator.cpp
 |   +-- pp_include.cpp
+|   +-- pp_deps.cpp
 |   +-- pp_dialect.cpp
 |   +-- pp_name_pool.cpp
 |   +-- pp_capabilities.cpp
@@ -1878,6 +1929,7 @@ preprocessor/
 |   +-- test_import.cpp           tests de #import
 |   +-- test_c_api.cpp            tests del ABI en C
 |   +-- test_include_search.cpp   tests de la busqueda de inclusiones
+|   +-- test_deps.cpp             tests de la lista de dependencias
 |   +-- test_dialect.cpp          tests del marcador de directiva
 |   +-- test_compiler_id.cpp      tests de la identidad del compilador
 |   +-- test_facts_cache.cpp      tests de la memoria entre ejecuciones
