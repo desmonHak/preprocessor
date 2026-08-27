@@ -257,6 +257,71 @@ Las expresiones de `#if` y `#elif` soportan:
 - Ternario: `cond ? a : b`
 - Operador `defined(NAME)` y `defined NAME`
 
+
+---
+
+## Cualquier lenguaje: el marcador de directiva
+
+`#` es el marcador de C, y por eso es el de por omision.  Pero vpp no es un
+preprocesador de C, y en Python, shell, Ruby, Make, YAML o TOML el `#` es un
+**comentario**: tomarlo por directiva se come lineas que no son suyas.
+
+El fichero puede decir cual es el suyo, en sus primeras lineas:
+
+```python
+#!/usr/bin/env python3
+# vpp:marker=%
+# este comentario es de Python y sale intacto
+%define DOBLE 2
+def f(x): return x * DOBLE
+```
+
+Va en el fichero y no en la linea de ordenes a proposito: asi el dialecto viaja
+con el fuente en lugar de con la invocacion.  Una bandera hay que acordarse de
+pasarla, se pierde al mover el fichero a otro build, y no le dice nada a quien
+lo abre.  Es el mismo motivo por el que Python declara su codificacion en las
+dos primeras lineas en vez de esperarla del entorno.
+
+Se busca el texto `vpp:` sin exigir ninguna sintaxis alrededor, asi que la
+declaracion se escribe dentro del comentario del propio lenguaje -- y con eso se
+rompe el circulo vicioso de tener que conocer el lenguaje para leer la linea que
+dice cual es el lenguaje:
+
+```
+# vpp:marker=%           Python, shell, Ruby, Make, YAML
+-- vpp:marker=%          Lua, SQL, Haskell
+// vpp:marker=%          C, C++, Rust, Java
+<!-- vpp:marker=% -->    HTML, XML
+;; vpp:marker=%          Lisp, ensamblador
+```
+
+Se mira solo al principio (tres lineas, para dejar sitio a un shebang); mas
+abajo no cuenta, y si aparece alli se avisa en vez de no hacer nada en silencio.
+Para un fichero que no se pueda tocar -- generado, o de terceros -- esta
+`--marker`, y la declaracion del fichero le gana por ser mas concreta.
+
+### Lo que NO se pierde por el camino
+
+Una directiva mal escrita **sigue siendo un error**:
+
+```
+$ vpp typo.py
+typo.py:2:1: error: directiva de preprocesador desconocida: %defien
+```
+
+La alternativa facil habria sido dejar pasar lo desconocido, y entonces
+`%defien FOO 1` se colaria como texto sin que nadie se enterase.  Con el
+marcador declarado no hay que elegir: lo que empieza por el es una directiva y
+un nombre desconocido ahi es una equivocacion; lo que no, es texto y sale
+intacto.  Antes esto era un aviso Y ademas se tragaba la linea, que es lo peor
+de las dos opciones.
+
+### Alcance
+
+El dialecto es **de cada fichero** y no se hereda al incluir.  Un fuente en
+Python con marcador `%` puede hacer `%include "cabecera.h"` y esa cabecera se
+lee con el suyo.  Otros ajustes que admite la declaracion: `raw-strings`,
+`line-comments`, `block-comments`.
 ---
 
 ## Metaprogramacion
@@ -1633,6 +1698,7 @@ omiten en vez de dar un rojo que no dice nada del codigo.
 | `vpp_test_import`      | #import, rutas de modulos y extensiones del dialecto           |
 | `vpp_test_c_api`       | El ABI en C completo: handles, diagnosticos, propiedad de la memoria |
 | `vpp_test_include_search` | Busqueda de inclusiones: precedencia de rutas, vecino relativo, `#include_next` |
+| `vpp_test_dialect`     | Marcador de directiva declarado en el fichero, y que una errata siga siendo error |
 | `vpp_test_compiler_id` | Identificacion del compilador: extraer el ejecutable, buscarlo por el PATH, y que la huella cambie al cambiar el binario o los flags |
 | `vpp_test_facts_cache` | Memoria entre ejecuciones: persistencia, separacion por compilador, fusion de escrituras y lo que se niega a guardar |
 

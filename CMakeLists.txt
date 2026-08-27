@@ -147,6 +147,7 @@ endif()
 
 # Nucleo del preprocesador: la API C++.
 set(VPP_SOURCES
+    src/pp_dialect.cpp
     src/pp_name_pool.cpp
     src/pp_diagnostics.cpp
     src/pp_lexer.cpp

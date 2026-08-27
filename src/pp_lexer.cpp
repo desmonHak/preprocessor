@@ -136,13 +136,18 @@ SourceLocation PPLexer::loc() const {
 }
 
 bool PPLexer::is_directive_start() const {
-    // es directiva si estamos en BOL y el proximo caracter no-espacio es '#'
-    // esto permite espacios/tabulaciones antes del '#' (p.ej.: "    #define")
+    // Es directiva si estamos al principio de linea y lo primero que no es
+    // espacio es el marcador.  Se admiten espacios y tabulaciones delante
+    // (p.ej. "    #define"), como en C.
     if (!m_at_bol) return false;
+    const std::string& marca = m_opts.directive_marker;
+    if (marca.empty()) return false;
+
     size_t look = m_pos;
     while (look < m_src.size() && (m_src[look] == ' ' || m_src[look] == '\t'))
         ++look;
-    return look < m_src.size() && m_src[look] == '#';
+    if (look + marca.size() > m_src.size()) return false;
+    return m_src.compare(look, marca.size(), marca) == 0;
 }
 
 /* --- tokenizacion principal ----------------------------------------------- */
@@ -190,18 +195,21 @@ void PPLexer::scan_directive_line(std::vector<PPToken>& out) {
         out.emplace_back(PPTokenType::WHITESPACE, std::move(ws), wl);
     }
 
-    // consumir el '#' de la directiva
+    // consumir el marcador de la directiva
     SourceLocation hash_loc = loc();
 
-    advance(); // consume '#'
+    const std::string& marca = m_opts.directive_marker;
+    for (std::size_t i = 0; i < marca.size(); ++i) advance();
 
-    // verificar si es '##' (pegado de tokens, raro al inicio de linea pero valido)
-    bool is_double = !at_end() && peek() == '#';
+    // Verificar si es '##' (pegado de tokens, raro al inicio de linea pero
+    // valido).  Solo tiene sentido con el marcador de C: con otro, dos
+    // marcadores seguidos no significan nada especial.
+    bool is_double = (marca == "#") && !at_end() && peek() == '#';
     if (is_double) {
         advance();
         out.emplace_back(PPTokenType::HASHHASH, "##", hash_loc);
     } else {
-        out.emplace_back(PPTokenType::HASH, "#", hash_loc);
+        out.emplace_back(PPTokenType::HASH, marca, hash_loc);
     }
 
     // tokenizar el resto de la linea de directiva

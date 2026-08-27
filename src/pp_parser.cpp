@@ -5,6 +5,7 @@
 
 #include <iostream>
 #include "preprocessor/pp_parser.h"
+#include "preprocessor/pp_dialect.h"
 #include <stdexcept>
 #include <sstream>
 
@@ -241,7 +242,12 @@ NodePtr PPParser::parse_text_line() {
 
 NodePtr PPParser::parse_directive() {
     SourceLocation hash_loc = cur().loc;
-    consume(); // consume '#'
+    // El marcador se toma del token, no se da por supuesto: puede no ser `#`.
+    // Es lo que hace que el mensaje de una directiva mal escrita en un fichero
+    // con otro dialecto nombre el marcador de VERDAD y no confunda a quien lo
+    // lee.
+    const std::string marcador = cur().value;
+    consume(); // consume el marcador
 
     // saltar espacios opcionales entre '#' y el nombre de directiva
     while (check(PPTokenType::WHITESPACE)) consume();
@@ -287,8 +293,38 @@ NodePtr PPParser::parse_directive() {
     if (dir_name == "assert")     return parse_assert(hash_loc);
     if (dir_name == "macro")      return parse_macro(hash_loc);
 
-    // directiva desconocida
-    m_diag.warning(hash_loc, "directiva de preprocesador desconocida: #" + dir_name);
+    /* La propia declaracion de dialecto.
+     *
+     * Ya se leyo antes de tokenizar -- tiene que ser asi, porque decide con que
+     * marcador se lexa -- de modo que aqui solo hay que consumirla.  Si no se
+     * reconociera, una declaracion escrita como `# vpp:...` en un fichero cuyo
+     * marcador SIGUE siendo `#` se leeria como la directiva `#vpp` y se
+     * quejaria de que no existe.
+     *
+     * Se avisa si aparece demasiado abajo: alli ya no la mira nadie, y un
+     * ajuste que no hace nada en silencio es peor que uno que falla. */
+    if (dir_name == "vpp") {
+        if (hash_loc.line > static_cast<uint32_t>(kDialectHeadLines)) {
+            m_diag.warning(hash_loc,
+                "la declaracion de dialecto solo cuenta en las primeras " +
+                std::to_string(kDialectHeadLines) + " lineas; aqui no hace nada");
+        }
+        consume_rest_of_line();
+        return nullptr;
+    }
+
+    /* Directiva desconocida: es un ERROR, no un aviso.
+     *
+     * El marcador de este fichero es inequivoco -- lo dice el dialecto -- asi
+     * que algo que empieza por el y no es ninguna directiva conocida solo puede
+     * ser una errata.  Antes esto era un aviso Y ademas se tragaba la linea, o
+     * sea lo peor de las dos opciones: la salida quedaba mal y el unico indicio
+     * era un mensaje facil de no leer.  gcc tambien lo trata como error.
+     *
+     * Un lenguaje en el que ese caracter NO marque directivas no llega hasta
+     * aqui: declara su marcador y la linea es texto. */
+    m_diag.error(hash_loc,
+                 "directiva de preprocesador desconocida: " + marcador + dir_name);
     consume_rest_of_line();
     return nullptr;
 }

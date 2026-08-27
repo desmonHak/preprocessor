@@ -46,6 +46,8 @@ static void print_help(const char* prog) {
         << "  --cache-dir <d>   Donde recordar lo que contesta el compilador\n"
         << "                    (por omision, la cache del usuario)\n"
         << "  --no-cache        No recuerda nada entre ejecuciones\n"
+        << "  --marker <s>      Que marca una directiva (por omision '#');\n"
+        << "                    el fichero puede decirlo con 'vpp:marker=s'\n"
         << "  --line-markers    Emite marcadores #line tras cada #include\n"
         << "  --no-expand       Desactiva la expansion de macros en texto\n"
         << "  --stdin           Lee el fuente de la entrada estandar\n"
@@ -112,6 +114,7 @@ int main(int argc, char* argv[]) {
     std::vector<vpp::PredefSource> predef_sources;
     std::string capabilities_cmd;
     std::string cache_dir;
+    std::string marker;
     bool        use_cache = true;
     std::vector<std::string> include_paths;
     std::vector<std::string> import_paths;
@@ -195,6 +198,14 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
+
+        // Marcador de directiva para ficheros que no se pueden tocar --
+        // generados, o de terceros -- donde no hay donde poner la declaracion.
+        // Si el fichero SI la trae, gana la suya por ser mas concreta.
+        if (std::strcmp(argv[i], "--marker") == 0 && i + 1 < argc) {
+            marker = argv[++i];
+            continue;
+        }
         if (std::strcmp(argv[i], "--no-cache") == 0) {
             use_cache = false;
             continue;
@@ -248,6 +259,7 @@ int main(int argc, char* argv[]) {
     opts.predef_sources    = predef_sources;
     opts.capabilities_command = capabilities_cmd;
     opts.cache_dir            = cache_dir;
+    if (!marker.empty()) opts.lexer.directive_marker = marker;
     opts.use_cache            = use_cache;
 
     // --- leer el fuente ---

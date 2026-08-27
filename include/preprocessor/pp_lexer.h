@@ -18,6 +18,22 @@ namespace vpp {
  * el estilo de comentarios que debe ignorar durante la expansion de macros.
  */
 struct LexerOptions {
+    /**
+     * @brief Lo que marca el comienzo de una directiva.
+     *
+     * `#` es el de C, y por eso es el de por omision, pero vpp no es un
+     * preprocesador de C: en Python, shell, Ruby, Make o YAML el `#` es un
+     * COMENTARIO, y tomarlo por directiva se come lineas que no son suyas.
+     *
+     * Con el marcador declarado no hay que elegir entre cazar erratas y
+     * respetar el lenguaje: lo que empieza por el marcador es una directiva y
+     * un nombre desconocido ahi es un error; lo que no, es texto y sale intacto.
+     *
+     * Puede tener varios caracteres (`//#`, `;;`) para lenguajes en los que
+     * conviene que la directiva sea ademas un comentario del propio lenguaje.
+     */
+    std::string directive_marker = "#";
+
     bool strip_line_comments  = true;  ///< Ignorar comentarios de linea //
     bool strip_block_comments = true;  ///< Ignorar comentarios de bloque /* */
     bool keep_whitespace      = false; ///< Preservar tokens WHITESPACE en directivas

@@ -6,6 +6,7 @@
 #include "preprocessor/preprocessor.h"
 #include "preprocessor/pp_lexer.h"
 #include "preprocessor/pp_parser.h"
+#include "preprocessor/pp_dialect.h"
 #include "preprocessor/pp_system.h"
 #include "preprocessor/pp_compiler_id.h"
 #include "preprocessor/pp_command_cache.h"
@@ -333,7 +334,13 @@ std::string Preprocessor::process(const std::string& source,
     }
 
     //   tokenizar
-    PPLexer lexer(source, filename, m_diag, m_opts.lexer);
+    /* El dialecto se toma del propio fichero si lo declara, y es SUYO: no se
+     * hereda ni se propaga a lo que incluya.  Sin eso, un fuente en Python no
+     * podria incluir una cabecera de C. */
+    LexerOptions lex_opts = m_opts.lexer;
+    apply_dialect_line(source, lex_opts, filename, m_diag);
+
+    PPLexer lexer(source, filename, m_diag, lex_opts);
     auto tokens = lexer.tokenize();
 
     //   parsear el AST
@@ -646,8 +653,13 @@ void Preprocessor::eval_include(const IncludeNode& node, std::string& output) {
     // Se lexa con la ruta RESUELTA, no con la escrita: es la que acabara en la
     // ubicacion de cada token, y de ella cuelgan tanto los mensajes como la
     // busqueda de un vecino desde este fichero.
+    // Cada fichero declara su propio dialecto; el de quien lo incluye no cuenta.
+    LexerOptions lex_opts = m_opts.lexer;
+    apply_dialect_line(content, lex_opts,
+                       hallado.path.empty() ? ruta : hallado.path, m_diag);
+
     PPLexer lexer(content, hallado.path.empty() ? ruta : hallado.path,
-                  m_diag, m_opts.lexer);
+                  m_diag, lex_opts);
     auto tokens = lexer.tokenize();
     PPParser parser(std::move(tokens), m_diag);
     auto ast = parser.parse();

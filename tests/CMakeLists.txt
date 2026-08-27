@@ -34,6 +34,7 @@ add_vpp_test(vpp_test_c_api        test_c_api.cpp)
 add_vpp_test(vpp_test_include_search test_include_search.cpp)
 add_vpp_test(vpp_test_compiler_id  test_compiler_id.cpp)
 add_vpp_test(vpp_test_facts_cache  test_facts_cache.cpp)
+add_vpp_test(vpp_test_dialect      test_dialect.cpp)
 
 # --- suite de conformidad con el preprocesador de C -------------------------
 #
@@ -124,5 +125,6 @@ add_custom_target(vpp_run_tests
         vpp_test_include_search
         vpp_test_compiler_id
         vpp_test_facts_cache
+        vpp_test_dialect
     COMMENT "Ejecutando todos los tests del preprocesador vpp"
 )
