@@ -21,6 +21,14 @@ struct LexerOptions {
     bool strip_line_comments  = true;  ///< Ignorar comentarios de linea //
     bool strip_block_comments = true;  ///< Ignorar comentarios de bloque /* */
     bool keep_whitespace      = false; ///< Preservar tokens WHITESPACE en directivas
+    /**
+     * @brief Reconocer cadenas crudas de C++ (`R"delim( ... )delim"`).
+     *
+     * Se puede apagar para un lenguaje en el que un identificador acabado en R
+     * pueda ir pegado a una comilla y signifique otra cosa.  Activado por
+     * omision porque el tratamiento de comillas ya es el de C.
+     */
+    bool raw_strings         = true;
 };
 
 /**
@@ -170,6 +178,14 @@ private:
      * @return Token STRING o CHAR_LIT con el contenido de la cadena.
      */
     PPToken scan_string(char delim);
+
+    /**
+     * @brief Lee una cadena cruda de C++ a partir de su prefijo.
+     * @param s Texto ya leido (el prefijo), al que se anade el resto.
+     * @param l Ubicacion del comienzo del literal.
+     * @return Token STRING con el literal entero, delimitadores incluidos.
+     */
+    PPToken scan_raw_string(std::string s, const SourceLocation& l);
 
     /**
      * @brief Escanea una cadena entre angulos <...> para #include.

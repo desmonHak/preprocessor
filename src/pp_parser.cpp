@@ -28,6 +28,47 @@ PPParser::PPParser(std::vector<PPToken> tokens, DiagnosticEngine& diag)
     , m_diag(diag)
 {}
 
+namespace {
+
+/**
+ * @brief Reescribe el operando de `#ifdef`/`#elifdef` como `defined(X)`.
+ *
+ * Las formas por nombre son azucar de las de expresion, asi que se convierten
+ * aqui y de ahi en adelante hay UNA sola manera de evaluar una condicion.  Lo
+ * contrario -- un camino de evaluacion aparte para las que nombran una macro --
+ * duplicaria el manejo del operando y las dos copias se separarian con el
+ * tiempo.
+ *
+ * @param operando Tokens que siguen a la directiva; se espera un identificador.
+ * @param negada   true para la forma `ndef`, que ademas antepone `!`.
+ * @param loc      Ubicacion de la directiva, para los tokens sinteticos.
+ * @return Los tokens de la condicion equivalente.  Si no hay identificador se
+ *         devuelve el operando tal cual, para que el evaluador diagnostique el
+ *         error en su sitio en vez de inventarse una condicion.
+ */
+std::vector<PPToken> como_defined(const std::vector<PPToken>& operando,
+                                  bool negada,
+                                  const SourceLocation& loc) {
+    const PPToken* nombre = nullptr;
+    for (const auto& t : operando) {
+        if (t.type == PPTokenType::IDENT) { nombre = &t; break; }
+        if (t.type != PPTokenType::WHITESPACE &&
+            t.type != PPTokenType::NEWLINE) break;
+    }
+    if (!nombre) return operando;
+
+    std::vector<PPToken> cond;
+    cond.reserve(5);
+    if (negada) cond.emplace_back(PPTokenType::BANG, "!", loc);
+    cond.emplace_back(PPTokenType::IDENT, "defined", loc);
+    cond.emplace_back(PPTokenType::LPAREN, "(", loc);
+    cond.push_back(*nombre);
+    cond.emplace_back(PPTokenType::RPAREN, ")", loc);
+    return cond;
+}
+
+} // namespace
+
 NodePtr PPParser::parse() {
     return parse_block();
 }
@@ -116,7 +157,8 @@ NodePtr PPParser::parse_block() {
             if (cur().type == PPTokenType::IDENT) {
                 const std::string& name = cur().value;
                 if (name == "endif"      || name == "else"     ||
-                    name == "elif"       || name == "endforeach"||
+                    name == "elif"       || name == "elifdef"   ||
+                    name == "elifndef"   || name == "endforeach"||
                     name == "endrepeat"  || name == "endmacro") {
                     // restaurar posicion: el padre consumira la directiva
                     m_pos = saved;
@@ -415,10 +457,27 @@ NodePtr PPParser::parse_if_block(SourceLocation hash_loc,
             goto done; // directiva cerrada correctamente
         }
 
-        if (kw == "elif") {
-            consume(); // consume "elif"
+        if (kw == "elif" || kw == "elifdef" || kw == "elifndef") {
+            const bool por_nombre = (kw != "elif");
+            const bool negada     = (kw == "elifndef");
+            const SourceLocation kw_loc = cur().loc;
+            consume(); // consume la palabra clave
             while (check(PPTokenType::WHITESPACE)) consume();
             std::vector<PPToken> elif_cond = consume_rest_of_line();
+
+            /* `#elifdef X` y `#elifndef X` se reescriben a `#elif defined(X)` y
+             * `#elif !defined(X)`.  Asi no hay una segunda forma de evaluar una
+             * condicion: la que ya existe se encarga, y con ella el operador
+             * `defined`, la expansion y los mensajes de error.
+             *
+             * No es solo una comodidad que faltase.  Sin reconocerlas se
+             * avisaba de "directiva desconocida" y se seguia hasta el `#else`,
+             * es decir, se tomaba una rama DISTINTA de la que toma el
+             * compilador, con un aviso que nadie lee. */
+            if (por_nombre) {
+                elif_cond = como_defined(elif_cond, negada, kw_loc);
+            }
+
             NodePtr elif_body = parse_block();
             elif_chain.emplace_back(std::move(elif_cond), false, std::move(elif_body));
             continue;

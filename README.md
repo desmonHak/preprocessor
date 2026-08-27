@@ -67,6 +67,8 @@ valores distintos.
 #ifdef   NAME                             condicional si esta definido
 #ifndef  NAME                             condicional si NO esta definido
 #elif    expr                             rama alternativa
+#elifdef  NAME                            rama alternativa si NAME esta definida
+#elifndef NAME                            rama alternativa si NO lo esta
 #else                                     rama por defecto
 #endif                                    cierre de bloque condicional
 #error   mensaje                          emite error y detiene
@@ -139,6 +141,21 @@ forma poco intuitiva y conviene no olvidarlo:
 
 Un literal es sin signo si lleva sufijo `u`/`U`, o si no cabe en un entero con
 signo aunque no lo lleve.
+
+**Cadenas crudas de C++** (`R"delim( ... )delim"`) se leen enteras: dentro no
+hay escapes, ni comentarios, ni macros, ni directivas, y pueden ocupar varias
+lineas.  El delimitador es lo que las hace utiles, porque deja escribir `)"` en
+el contenido:
+
+```
+auto s = R"xy(esto tiene )" dentro y no cierra nada)xy";
+```
+
+Se puede apagar (`LexerOptions::raw_strings`) para un lenguaje en el que un
+identificador acabado en `R` pueda ir pegado a una comilla y signifique otra
+cosa.  Solo cuentan los cinco prefijos del estandar -- `R`, `LR`, `uR`, `UR`,
+`u8R` -- de modo que un `FOOR"..."` sigue siendo un identificador y una cadena
+normal.
 
 **`#include_next <fichero>`** repite la busqueda del fichero, pero empezando en
 el directorio SIGUIENTE a aquel donde aparecio el que la escribe.  Es como una

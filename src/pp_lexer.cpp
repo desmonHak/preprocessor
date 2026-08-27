@@ -459,6 +459,15 @@ PPToken PPLexer::next_directive_token_nosp() {
     }
 }
 
+/**
+ * @brief Indica si un identificador es prefijo de cadena cruda de C++.
+ * @param s Identificador leido.
+ * @return true si es uno de R, LR, uR, UR o u8R.
+ */
+static bool is_raw_string_prefix(const std::string& s) {
+    return s == "R" || s == "LR" || s == "uR" || s == "UR" || s == "u8R";
+}
+
 PPToken PPLexer::scan_ident() {
     SourceLocation l = loc();
     std::string s;
@@ -466,7 +475,66 @@ PPToken PPLexer::scan_ident() {
            (std::isalnum((unsigned char)peek()) || peek() == '_')) {
         s += advance();
     }
+
+    /* Cadena cruda de C++: R"delim( ... )delim".
+     *
+     * Se atiende AQUI porque el prefijo se lee como un identificador; para
+     * cuando aparece la comilla ya se sabe que viene una cadena cruda, y sin
+     * saberlo el escaneo normal la cierra en la primera comilla que encuentre
+     * dentro.  Con la forma sin delimitador colaba de casualidad; con
+     * delimitador -- que es justo lo que se usa cuando el contenido lleva `)"`
+     * -- partia el literal por la mitad y corrompia el resto de la linea. */
+    if (m_opts.raw_strings && !at_end() && peek() == '"' &&
+        is_raw_string_prefix(s)) {
+        return scan_raw_string(std::move(s), l);
+    }
+
     return PPToken(PPTokenType::IDENT, std::move(s), l);
+}
+
+PPToken PPLexer::scan_raw_string(std::string s, const SourceLocation& l) {
+    s += advance();   // la comilla de apertura
+
+    // El delimitador va entre la comilla y el parentesis.  El estandar lo
+    // limita a 16 caracteres y excluye espacios, parentesis y la barra.
+    std::string delim;
+    while (!at_end() && peek() != '(') {
+        const char c = peek();
+        if (c == ')' || c == '\\' || c == '"' ||
+            std::isspace((unsigned char)c) || delim.size() >= 16) {
+            break;
+        }
+        delim += c;
+        s += advance();
+    }
+
+    if (at_end() || peek() != '(') {
+        m_diag.error(l, "delimitador de cadena cruda mal formado");
+        return PPToken(PPTokenType::STRING, std::move(s), l);
+    }
+    s += advance();   // '('
+
+    // Dentro NO hay escapes: la unica forma de terminar es la secuencia de
+    // cierre exacta.  Por eso el delimitador existe -- deja escribir `)"` en el
+    // contenido sin que cierre nada.
+    const std::string cierre = ")" + delim + "\"";
+    for (;;) {
+        if (at_end()) {
+            m_diag.error(l, "cadena cruda sin cerrar");
+            return PPToken(PPTokenType::STRING, std::move(s), l);
+        }
+        if (peek() == ')') {
+            bool coincide = true;
+            for (std::size_t i = 0; i < cierre.size(); ++i) {
+                if (peek(static_cast<int>(i)) != cierre[i]) { coincide = false; break; }
+            }
+            if (coincide) {
+                for (std::size_t i = 0; i < cierre.size(); ++i) s += advance();
+                return PPToken(PPTokenType::STRING, std::move(s), l);
+            }
+        }
+        s += advance();
+    }
 }
 
 PPToken PPLexer::scan_pp_number() {

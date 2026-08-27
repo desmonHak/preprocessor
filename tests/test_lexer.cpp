@@ -178,10 +178,83 @@ static void test_source_location() {
 
 /* --- main ----------------------------------------------------------------- */
 
+/**
+ * @brief Busca el primer token STRING de una tokenizacion.
+ * @param toks Tokens a recorrer.
+ * @return Su texto, o cadena vacia si no hay ninguno.
+ */
+static std::string primer_string(const std::vector<PPToken>& toks) {
+    for (const auto& t : toks) {
+        if (t.type == PPTokenType::STRING) return t.value;
+    }
+    return {};
+}
+
+/**
+ * @brief Cadenas crudas de C++: el delimitador es lo que las hace utiles.
+ *
+ * Sin reconocerlas, el escaneo normal cierra el literal en la primera comilla
+ * que aparezca dentro.  La forma sin delimitador colaba de casualidad; la que
+ * lo lleva -- que es justo la que se usa cuando el contenido tiene `)"` --
+ * partia el literal y corrompia el resto de la linea.
+ */
+static void test_cadena_cruda_con_delimitador() {
+    auto toks = lex("auto s = R\"xy(tiene )\" dentro)xy\";\n");
+    ASSERT_EQ(primer_string(toks), std::string("R\"xy(tiene )\" dentro)xy\""));
+}
+
+/** @brief Dentro de una cruda no hay macros, ni comentarios, ni directivas. */
+static void test_cadena_cruda_no_interpreta_nada() {
+    auto toks = lex("auto s = R\"(M y # y /* */)\";\n");
+    ASSERT_EQ(primer_string(toks), std::string("R\"(M y # y /* */)\""));
+}
+
+/** @brief Puede ocupar varias lineas. */
+static void test_cadena_cruda_multilinea() {
+    auto toks = lex("auto s = R\"(uno\ndos)\";\n");
+    ASSERT_EQ(primer_string(toks), std::string("R\"(uno\ndos)\""));
+}
+
+/** @brief Los prefijos con codificacion cuentan igual. */
+static void test_cadena_cruda_prefijos() {
+    ASSERT_EQ(primer_string(lex("auto a = u8R\"d(x)d\";\n")),
+              std::string("u8R\"d(x)d\""));
+    ASSERT_EQ(primer_string(lex("auto b = LR\"(y)\";\n")),
+              std::string("LR\"(y)\""));
+}
+
+/**
+ * @brief Un identificador acabado en R seguido de comilla NO es una cruda.
+ *
+ * Solo los cinco prefijos del estandar cuentan.  Sin esa restriccion, en un
+ * lenguaje donde un nombre pueda ir pegado a una comilla se empezaria a comer
+ * texto que no toca.
+ */
+static void test_identificador_acabado_en_r() {
+    auto toks = lex("FOOR\"normal\"\n");
+    ASSERT_EQ(primer_string(toks), std::string("\"normal\""));
+}
+
+/** @brief Con la opcion apagada, una cruda se lexa como antes. */
+static void test_cadena_cruda_desactivable() {
+    LexerOptions opts;
+    opts.raw_strings = false;
+    DiagnosticEngine diag([](const Diagnostic&){});
+    PPLexer lexer("auto s = R\"xy(a)xy\";\n", "<test>", diag, opts);
+    auto toks = lexer.tokenize();
+    ASSERT_EQ(primer_string(toks), std::string("\"xy(a)xy\""));
+}
+
 int main() {
     std::cout << "=== Tests del lexer del preprocesador vpp ===\n";
 
     test_empty_source();
+    test_cadena_cruda_con_delimitador();
+    test_cadena_cruda_no_interpreta_nada();
+    test_cadena_cruda_multilinea();
+    test_cadena_cruda_prefijos();
+    test_identificador_acabado_en_r();
+    test_cadena_cruda_desactivable();
     test_simple_directive_define();
     test_text_line_preserves_content();
     test_directive_ifdef();

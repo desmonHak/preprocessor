@@ -175,6 +175,66 @@ static void test_exclude_error_in_inactive_branch() {
 
 /* --- main ----------------------------------------------------------------- */
 
+/**
+ * @brief `#elifdef` toma su rama cuando la macro esta definida.
+ *
+ * Las expectativas van fijadas aqui y no comparadas contra el compilador de la
+ * maquina: `#elifdef` es de C23 y llego en GCC 12, asi que un gcc mas viejo
+ * contesta otra cosa.  En el corpus diferencial este caso pasaria en unos
+ * sistemas y fallaria en otros; aqui dice lo que el estandar exige.
+ */
+static void test_elifdef_definida() {
+    const std::string out = pp(
+        "#define A 1\n#ifdef Z\nzeta\n#elifdef A\nalfa\n#else\notro\n#endif\n");
+    CHECK(contains(out, "alfa"),  "#elifdef entra si la macro esta definida");
+    CHECK(!contains(out, "otro"), "y no cae al #else");
+    CHECK(!contains(out, "zeta"), "ni toma la rama de arriba");
+}
+
+/** @brief `#elifdef` no toma su rama si la macro no esta definida. */
+static void test_elifdef_no_definida() {
+    const std::string out = pp(
+        "#ifdef Z\nzeta\n#elifdef Y\nye\n#else\notro\n#endif\n");
+    CHECK(contains(out, "otro"), "#elifdef con macro ausente cae al #else");
+    CHECK(!contains(out, "ye"),  "y no entra en su rama");
+}
+
+/** @brief `#elifndef` es la forma negada: entra cuando NO esta definida. */
+static void test_elifndef() {
+    const std::string sin = pp(
+        "#ifdef Z\nzeta\n#elifndef B\nsin_b\n#else\notro\n#endif\n");
+    CHECK(contains(sin, "sin_b"), "#elifndef entra si la macro NO esta definida");
+
+    const std::string con = pp(
+        "#define B 1\n#ifdef Z\nzeta\n#elifndef B\nsin_b\n#else\notro\n#endif\n");
+    CHECK(contains(con, "otro"),    "y no entra si SI esta definida");
+    CHECK(!contains(con, "sin_b"),  "ni emite su cuerpo");
+}
+
+/** @brief Se pueden encadenar, y gana la primera que acierta. */
+static void test_elifdef_cadena() {
+    const std::string out = pp(
+        "#define C 1\n#define D 1\n"
+        "#ifdef Z\nz\n#elifdef Y\ny\n#elifdef C\nce\n#elifdef D\nde\n#else\no\n#endif\n");
+    CHECK(contains(out, "ce"),  "gana la primera rama que acierta");
+    CHECK(!contains(out, "de"), "y no se evalua la siguiente aunque tambien acierte");
+    CHECK(!contains(out, "o"),  "ni el #else");
+}
+
+/**
+ * @brief Se mezclan con `#elif` de expresion en la misma cadena.
+ *
+ * Es lo que confirma que no hay dos maneras de evaluar una condicion: las
+ * formas por nombre se reescriben a `defined(X)` y de ahi en adelante recorren
+ * el mismo camino que las demas.
+ */
+static void test_elifdef_mezclado_con_elif() {
+    const std::string out = pp(
+        "#define N 5\n"
+        "#if N > 10\ngrande\n#elifdef Z\nzeta\n#elif N > 3\nmediano\n#else\npeque\n#endif\n");
+    CHECK(contains(out, "mediano"), "una cadena mezcla #elifdef y #elif sin problema");
+}
+
 int main() {
     std::cout << "=== Tests de condicionales del preprocesador vpp ===\n";
 
@@ -187,6 +247,11 @@ int main() {
     test_ifndef_defined();
     test_ifndef_undefined();
     test_elif_chain();
+    test_elifdef_definida();
+    test_elifdef_no_definida();
+    test_elifndef();
+    test_elifdef_cadena();
+    test_elifdef_mezclado_con_elif();
     test_nested_if();
     test_defined_operator();
     test_expression_arithmetic();
