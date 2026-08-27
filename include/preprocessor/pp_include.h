@@ -47,6 +47,16 @@ struct ResolvedInclude {
      * consultar la lista de rutas.
      */
     int search_index = -1;
+
+    /**
+     * @brief true si aparecio en un directorio declarado como de sistema.
+     *
+     * Lo que distingue una cabecera propia de una ajena, y con ello lo que
+     * `-MM` debe dejar fuera de la lista de dependencias: rehacer el build
+     * porque cambio una cabecera del sistema no tiene sentido -- si eso pasa,
+     * se recompila entero de todos modos.
+     */
+    bool system_dir = false;
 };
 
 /**
@@ -67,6 +77,7 @@ public:
      * @param import_paths  Rutas para `#import <...>`, en orden.
      */
     IncludeSearch(const std::vector<std::string>& include_paths,
+                  const std::vector<std::string>& system_paths,
                   const std::vector<std::string>& import_paths);
 
     /**
@@ -159,6 +170,15 @@ private:
 
 private:
     std::vector<std::string> m_include_paths;  ///< Rutas de `#include <...>`
+
+    /**
+     * @brief Rutas declaradas como de sistema.
+     *
+     * Se recorren DESPUES de las propias, que es el orden de cc, y forman con
+     * ellas un solo espacio de indices: asi `#include_next` sigue recorriendo
+     * la cadena entera y no se para al pasar de unas a otras.
+     */
+    std::vector<std::string> m_system_paths;
     std::vector<std::string> m_import_paths;   ///< Rutas de `#import <...>`
 };
 

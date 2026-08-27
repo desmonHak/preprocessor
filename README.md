@@ -1120,6 +1120,9 @@ vpp --no-cache archivo.c
 # Definir macros desde la linea de comandos
 vpp -DDEBUG -DVERSION=2 archivo.vel
 
+# Quitar una macro que traiga el volcado del compilador
+vpp --predef-from "gcc -dM -E -" -U__GNUC__ archivo.c
+
 # Anadir rutas de busqueda para #include
 vpp -I ./include -I /usr/local/vesta/include archivo.vel
 
@@ -1293,6 +1296,8 @@ vpp --deps -MT build/main.o -MP -I include main.c
 | `-MF <f>` | Escribe la regla en ese fichero en vez de en la salida |
 | `-MT <t>` | Nombre del objetivo (por omision, el fichero de salida) |
 | `-MP` | Anade una regla vacia por cada dependencia |
+| `-MM` | Como `--deps`, dejando fuera las cabeceras de sistema |
+| `-MMD` | Como `-MD`, dejando fuera las cabeceras de sistema |
 
 `-MP` esta para que borrar una cabecera no rompa el build: sin esas reglas, make
 lee la lista vieja, ve un fichero que ya no esta y se para -- cuando en realidad
@@ -1309,6 +1314,17 @@ invertida es un escape.  El espacio y el dolar van escapados por lo mismo.
 > build system los emite tal cual; solo hay que traducir ese.
 
 Comprobado contra `gcc -M`: la salida es identica byte a byte, con y sin `-MP`.
+
+### Cabeceras de sistema
+
+`-isystem <ruta>` declara un directorio como ajeno: se busca DESPUES de las
+rutas `-I`, que es el orden de cc, y lo que aparezca en el queda fuera de la
+lista que emiten `-MM` y `-MMD`.  Rehacer el build porque cambio una cabecera
+del sistema no tiene sentido: si eso pasa, se recompila entero de todos modos.
+
+La regla es **transitiva**: lo que una cabecera de sistema incluya sigue siendo
+ajeno aunque lo encuentre por una ruta propia.  Comprobado contra `gcc -MM`,
+que da lo mismo.
 ---
 
 ## Uso como biblioteca (C++ API)

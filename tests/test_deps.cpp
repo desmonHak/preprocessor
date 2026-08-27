@@ -12,6 +12,10 @@
  */
 
 #include "preprocessor/pp_deps.h"
+#include "preprocessor/preprocessor.h"
+
+#include <filesystem>
+#include <fstream>
 
 #include <iostream>
 #include <string>
@@ -171,6 +175,110 @@ static void test_sin_inclusiones() {
           "sin inclusiones la regla lleva solo el fuente");
 }
 
+
+/* --- cabeceras de sistema ------------------------------------------------- */
+
+/**
+ * @brief `-MM` deja fuera lo que viene de un directorio de sistema.
+ *
+ * Rehacer el build porque cambio una cabecera del sistema no tiene sentido: si
+ * eso pasa, se recompila entero de todos modos.  Y la regla es TRANSITIVA -- lo
+ * que una cabecera de sistema incluya sigue siendo ajeno aunque lo encuentre
+ * por una ruta propia -- que es lo que hace cc.
+ */
+static void test_dependencias_sin_sistema() {
+    namespace fs = std::filesystem;
+    const fs::path raiz = fs::temp_directory_path() / "vpp_test_sysdeps";
+    fs::remove_all(raiz);
+    fs::create_directories(raiz / "mio");
+    fs::create_directories(raiz / "sys");
+
+    auto escribir = [](const fs::path& p, const std::string& s) {
+        std::ofstream ofs(p, std::ios::binary);
+        ofs << s;
+    };
+    escribir(raiz / "mio" / "propia.h", "#ifndef P\n#define P\n#endif\n");
+    // La de sistema tira de otra por una ruta RELATIVA: aun asi es ajena.
+    escribir(raiz / "sys" / "ajena.h",
+             "#ifndef A\n#define A\n#include \"vecina.h\"\n#endif\n");
+    escribir(raiz / "sys" / "vecina.h", "#ifndef V\n#define V\n#endif\n");
+
+    Preprocessor pre([](const Diagnostic&){});
+    pre.options().include_paths.push_back((raiz / "mio").string());
+    pre.options().system_include_paths.push_back((raiz / "sys").string());
+    pre.process("#include <propia.h>\n#include <ajena.h>\n", "t.c");
+
+    const auto todas = pre.included_files();
+    const auto mias  = pre.user_included_files();
+
+    CHECK(todas.size() == 3, "la lista completa trae las tres cabeceras");
+    CHECK(mias.size() == 1,  "y la de solo las propias, una");
+    CHECK(!mias.empty() && mias[0].find("propia.h") != std::string::npos,
+          "la que queda es la propia");
+
+    bool hay_vecina = false;
+    for (const auto& m : mias) {
+        if (m.find("vecina.h") != std::string::npos) hay_vecina = true;
+    }
+    CHECK(!hay_vecina,
+          "lo que incluye una de sistema tambien es ajeno, aunque sea relativo");
+
+    std::error_code ec;
+    fs::remove_all(raiz, ec);
+}
+
+/**
+ * @brief Las rutas de sistema se miran DESPUES de las propias.
+ *
+ * Es el orden de cc, y decide cual gana cuando el mismo nombre esta en las dos.
+ */
+static void test_orden_de_las_rutas() {
+    namespace fs = std::filesystem;
+    const fs::path raiz = fs::temp_directory_path() / "vpp_test_sysorden";
+    fs::remove_all(raiz);
+    fs::create_directories(raiz / "mio");
+    fs::create_directories(raiz / "sys");
+
+    auto escribir = [](const fs::path& p, const std::string& s) {
+        std::ofstream ofs(p, std::ios::binary);
+        ofs << s;
+    };
+    escribir(raiz / "mio" / "comun.h", "DE_LA_MIA\n");
+    escribir(raiz / "sys" / "comun.h", "DE_LA_DE_SISTEMA\n");
+
+    Preprocessor pre([](const Diagnostic&){});
+    pre.options().include_paths.push_back((raiz / "mio").string());
+    pre.options().system_include_paths.push_back((raiz / "sys").string());
+    const std::string out = pre.process("#include <comun.h>\n", "t.c");
+
+    CHECK(out.find("DE_LA_MIA") != std::string::npos,
+          "gana la ruta propia sobre la de sistema");
+
+    std::error_code ec;
+    fs::remove_all(raiz, ec);
+}
+
+/* --- quitar macros -------------------------------------------------------- */
+
+/** @brief `undefines` cancela lo que definio `predefines`. */
+static void test_undefine() {
+    Preprocessor pre([](const Diagnostic&){});
+    pre.options().predefines.push_back("A");
+    pre.options().undefines.push_back("A");
+    const std::string out = pre.process(
+        "#ifdef A\nsi\n#else\nno\n#endif\n", "t.c");
+    CHECK(out.find("no") != std::string::npos,
+          "-U cancela lo que trajo -D");
+}
+
+/** @brief Y sin el, la macro sigue definida. */
+static void test_sin_undefine() {
+    Preprocessor pre([](const Diagnostic&){});
+    pre.options().predefines.push_back("A");
+    const std::string out = pre.process(
+        "#ifdef A\nsi\n#else\nno\n#endif\n", "t.c");
+    CHECK(out.find("si") != std::string::npos, "sin -U la macro esta definida");
+}
 /* --- main ----------------------------------------------------------------- */
 
 int main() {
@@ -184,6 +292,10 @@ int main() {
     test_escapes_de_make();
     test_lineas_largas();
     test_sin_inclusiones();
+    test_dependencias_sin_sistema();
+    test_orden_de_las_rutas();
+    test_undefine();
+    test_sin_undefine();
 
     std::cout << "\nResultados: " << tests_passed << " pasados, "
               << tests_failed  << " fallados\n";

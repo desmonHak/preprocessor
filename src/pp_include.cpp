@@ -61,8 +61,10 @@ bool read_file(const std::string& path, std::string& out) {
 }
 
 IncludeSearch::IncludeSearch(const std::vector<std::string>& include_paths,
+                                 const std::vector<std::string>& system_paths,
                                  const std::vector<std::string>& import_paths)
     : m_include_paths(include_paths)
+    , m_system_paths(system_paths)
     , m_import_paths(import_paths) {}
 
 std::string IncludeSearch::request_key(const std::string& path,
@@ -112,16 +114,27 @@ ResolvedInclude IncludeSearch::locate(const std::string& path,
         }
     }
 
-    // Despues, las rutas de busqueda, desde donde toque.
-    const int n = static_cast<int>(m_include_paths.size());
-    for (int i = (start > 0 ? start : 0); !r.found && i < n; ++i) {
-        const std::filesystem::path cand =
-            std::filesystem::path(m_include_paths[static_cast<std::size_t>(i)])
-            / path;
+    /* Despues, las rutas de busqueda, desde donde toque.
+     *
+     * Las propias y las de sistema forman UN SOLO espacio de indices, con las
+     * de sistema al final.  Eso da a la vez las dos cosas que hacen falta: el
+     * orden de cc -- primero las propias -- y que `#include_next` siga
+     * recorriendo la cadena entera en lugar de pararse al pasar de unas a
+     * otras. */
+    const int propias = static_cast<int>(m_include_paths.size());
+    const int total   = propias + static_cast<int>(m_system_paths.size());
+    for (int i = (start > 0 ? start : 0); !r.found && i < total; ++i) {
+        const std::string& dir =
+            (i < propias)
+              ? m_include_paths[static_cast<std::size_t>(i)]
+              : m_system_paths[static_cast<std::size_t>(i - propias)];
+
+        const std::filesystem::path cand = std::filesystem::path(dir) / path;
         if (file_exists(cand)) {
             r.found        = true;
             r.path         = cand.string();
             r.search_index = i;
+            r.system_dir   = (i >= propias);
         }
     }
 

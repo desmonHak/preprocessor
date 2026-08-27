@@ -99,6 +99,15 @@ std::string Preprocessor::effective_cache_dir() const {
     return user_cache_dir();
 }
 
+std::vector<std::string> Preprocessor::user_included_files() const {
+    std::vector<std::string> out;
+    out.reserve(m_included_files.size());
+    for (const auto& f : m_included_files) {
+        if (!m_system_includes.count(f)) out.push_back(f);
+    }
+    return out;
+}
+
 namespace {
 
 /**
@@ -305,7 +314,8 @@ std::string Preprocessor::process(const std::string& source,
     // hasta entonces el oraculo diria que no hay compilador.
     // El buscador de inclusiones se monta UNA vez, con las rutas ya fijadas.
     // Rehacerlo en cada inclusion copiaba la lista entera de rutas cada vez.
-    m_search = IncludeSearch(m_opts.include_paths, m_opts.import_paths);
+    m_search = IncludeSearch(m_opts.include_paths, m_opts.system_include_paths,
+                             m_opts.import_paths);
 
     m_capabilities.set_cache_dir(effective_cache_dir());
     m_capabilities.set_command(m_opts.capabilities_command);
@@ -316,6 +326,13 @@ std::string Preprocessor::process(const std::string& source,
 
     for (const auto& def : m_opts.predefines) {
         add_define(def);
+    }
+
+    // Y por ultimo lo que se quita: `-U` existe para cancelar lo que traiga el
+    // volcado del compilador o el propio vpp, asi que va despues de todo lo que
+    // define.
+    for (const auto& name : m_opts.undefines) {
+        m_macros.undef(name);
     }
 
     // definir macros de fecha y hora
@@ -670,9 +687,18 @@ void Preprocessor::eval_include(const IncludeNode& node, std::string& output) {
          * dentro busque al lado de este fichero y no del de partida; lo segundo
          * es lo que necesita un `#include_next` para reanudar en el siguiente
          * directorio en vez de volver a encontrarse a si mismo. */
+        /* Un fichero cuenta como de sistema si aparecio en un directorio de
+         * sistema O si lo incluye otro que ya lo era.  Lo segundo hace falta:
+         * una cabecera del sistema tira de otras por rutas propias, y todas
+         * siguen siendo ajenas.  Es la regla de cc para `-MM`. */
+        const bool es_sistema_dep =
+            situado.system_dir ||
+            (!m_include_stack.empty() && m_include_stack.back().system);
+        if (es_sistema_dep) m_system_includes.insert(clave);
+
         m_include_stack.push_back(
             IncludeFrame{hallado.path.empty() ? ruta : hallado.path,
-                         hallado.search_index});
+                         hallado.search_index, es_sistema_dep});
         /* Y ademas se APUNTA, que no es lo mismo: la pila se vacia al salir y
          * esto tiene que sobrevivir a todo el preproceso.  Es lo que permite
          * que un cache sepa que este fuente depende de aquel fichero, y es lo

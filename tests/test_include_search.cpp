@@ -81,7 +81,7 @@ std::vector<std::string> rutas() {
 
 /** @brief Se encuentra por la lista de rutas y se dice en cual aparecio. */
 static void test_busqueda_por_rutas() {
-    IncludeSearch s(rutas(), {});
+    IncludeSearch s(rutas(), {}, {});
 
     ResolvedInclude r = s.resolve("solo_a.h", true, "");
     CHECK(r.found, "encuentra un fichero de la primera ruta");
@@ -95,7 +95,7 @@ static void test_busqueda_por_rutas() {
 
 /** @brief Con el mismo nombre en dos rutas, gana la primera. */
 static void test_precedencia_de_rutas() {
-    IncludeSearch s(rutas(), {});
+    IncludeSearch s(rutas(), {}, {});
     const ResolvedInclude r = s.resolve("comun.h", true, "");
     CHECK(r.found && r.content.find("DESDE_A") != std::string::npos,
           "gana la ruta que va antes en la lista");
@@ -110,7 +110,7 @@ static void test_precedencia_de_rutas() {
  * de llegar a la de debajo.
  */
 static void test_include_next() {
-    IncludeSearch s(rutas(), {});
+    IncludeSearch s(rutas(), {}, {});
 
     // partiendo de la ruta 0, reanudar en la 1
     const ResolvedInclude r = s.resolve("comun.h", true, "", /*start=*/1);
@@ -132,7 +132,7 @@ static void test_include_next() {
  */
 static void test_vecino_relativo() {
     // sin ninguna ruta de inclusion: solo puede salir por la via relativa
-    IncludeSearch s({}, {});
+    IncludeSearch s({}, {}, {});
 
     const std::string desde = (g_raiz / "origen" / "principal.h").string();
     const ResolvedInclude r = s.resolve("hermano.h", false, desde);
@@ -145,7 +145,7 @@ static void test_vecino_relativo() {
 
 /** @brief La forma <...> no mira al lado del que incluye. */
 static void test_sistema_no_mira_al_lado() {
-    IncludeSearch s({}, {});
+    IncludeSearch s({}, {}, {});
     const std::string desde = (g_raiz / "origen" / "principal.h").string();
     const ResolvedInclude r = s.resolve("hermano.h", true, desde);
     CHECK(!r.found,
@@ -155,7 +155,7 @@ static void test_sistema_no_mira_al_lado() {
 /** @brief `#import` mira en sus propias rutas y prueba las extensiones. */
 static void test_import() {
     escribir("mods/vesta/io.vph", "MODULO_IO\n");
-    IncludeSearch s({}, { (g_raiz / "mods").string() });
+    IncludeSearch s({}, {}, { (g_raiz / "mods").string() });
 
     ResolvedInclude r = s.resolve_import("vesta/io");
     CHECK(r.found && r.content.find("MODULO_IO") != std::string::npos,
@@ -168,7 +168,7 @@ static void test_import() {
 /** @brief Un fichero vacio EXISTE; no es lo mismo que no encontrarlo. */
 static void test_fichero_vacio() {
     escribir("a/vacio.h", "");
-    IncludeSearch s(rutas(), {});
+    IncludeSearch s(rutas(), {}, {});
     const ResolvedInclude r = s.resolve("vacio.h", true, "");
     CHECK(r.found, "una cabecera vacia cuenta como encontrada");
     CHECK(r.content.empty(), "y su contenido es vacio");

@@ -65,7 +65,30 @@ struct PPOptions {
     bool                 track_includes;    ///< true para detectar inclusion circular
     std::vector<std::string> include_paths; ///< Rutas de busqueda para #include <...>
     std::vector<std::string> import_paths;  ///< Rutas de busqueda para #import (libreria de macros vpp)
+
+    /**
+     * @brief Rutas declaradas como de sistema (`-isystem`).
+     *
+     * Se recorren DESPUES de include_paths, que es el orden de cc.  Lo que
+     * aparezca en ellas queda marcado como ajeno, y con eso `-MM` puede dejarlo
+     * fuera de la lista de dependencias: rehacer el build porque cambio una
+     * cabecera del sistema no tiene sentido.
+     */
+    std::vector<std::string> system_include_paths;
     std::vector<std::string> predefines;    ///< Macros a predefinir (formato "NAME" o "NAME=val")
+
+    /**
+     * @brief Macros a quitar antes de procesar.
+     *
+     * Se aplican DESPUES de `predefines` y de los conjuntos precargados, que es
+     * para lo que sirven: cancelar algo que trae el volcado del compilador o el
+     * propio vpp.  Ese es el uso que documenta cc para `-U`.
+     *
+     * Con ello, `-DA -UA` deja A sin definir y `-UA -DA` tambien: el orden
+     * relativo entre unas y otras no se conserva.  Escribir ambas sobre el mismo
+     * nombre es raro y ambiguo; lo que si se respeta es lo que se usa.
+     */
+    std::vector<std::string> undefines;
     /**
      * @brief Conjuntos de macros a precargar, en orden.
      *
@@ -187,6 +210,17 @@ public:
     }
 
     /**
+     * @brief Ficheros incluidos que NO vienen de un directorio de sistema.
+     *
+     * Es lo que pide `-MM`: las dependencias que de verdad obligan a rehacer el
+     * build.  Una cabecera del sistema no lo hace -- si esa cambia, se
+     * recompila todo de todas formas.
+     *
+     * @return Las rutas propias, en el orden en que aparecieron.
+     */
+    std::vector<std::string> user_included_files() const;
+
+    /**
      * @brief Acceso a las opciones del preprocesador (modificables antes de process).
      * @return Referencia a las opciones.
      */
@@ -280,6 +314,16 @@ private:
         std::string path;             ///< Ruta con la que se abrio
         int         search_index = -1; ///< Directorio de la lista donde aparecio,
                                        ///< o -1 si fue relativo al que incluye
+
+        /**
+         * @brief true si este fichero cuenta como de sistema.
+         *
+         * Lo es si aparecio en un directorio de sistema, o si lo incluyo otro
+         * que ya lo era.  Lo segundo hace falta: una cabecera de sistema tira de
+         * otras por rutas propias, y todas ellas siguen siendo ajenas.  Es la
+         * misma regla que aplica cc para `-MM`.
+         */
+        bool system = false;
     };
 
     std::vector<IncludeFrame>       m_include_stack;      ///< Ficheros en curso
@@ -294,6 +338,14 @@ private:
      * fallo que no da error, da un resultado que ya no corresponde al codigo.
      */
     std::vector<std::string>        m_included_files;
+
+    /**
+     * @brief Ficheros incluidos que vienen de un directorio de sistema.
+     *
+     * Va aparte de m_included_files para no cambiar el tipo de lo que ya
+     * devuelve included_files(), que es API publica.
+     */
+    std::unordered_set<std::string> m_system_includes;
 
     /**
      * @brief Remapeo de posicion instalado por `#line`.

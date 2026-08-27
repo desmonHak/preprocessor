@@ -37,6 +37,9 @@ static void print_help(const char* prog) {
         << "  -o <archivo>      Archivo de salida (por defecto: stdout)\n"
         << "  -D NAME[=val]     Define una macro antes de procesar\n"
         << "  -I <ruta>         Anade ruta de busqueda para #include <...>\n"
+        << "  -U NAME           Quita una macro (tambien -UNAME)\n"
+        << "  -isystem <ruta>   Ruta de sistema: se busca despues de las -I y\n"
+        << "                    lo que aparezca en ella queda fuera de -MM\n"
         << "  -M <ruta>         Anade ruta de busqueda para #import <...>\n"
         << "  --predef <f>      Precarga las directivas de un fichero\n"
         << "  --predef-from <c> Precarga las directivas que emita un comando,\n"
@@ -51,6 +54,8 @@ static void print_help(const char* prog) {
         << "                    en lugar de la salida (el -M de cc, que aqui ya\n"
         << "                    significa ruta de #import)\n"
         << "  -MD               Emite las dependencias ADEMAS de la salida\n"
+        << "  -MM               Como --deps, sin las cabeceras de sistema\n"
+        << "  -MMD              Como -MD, sin las cabeceras de sistema\n"
         << "  -MF <f>           Escribe las dependencias en ese fichero\n"
         << "  -MT <t>           Nombre del objetivo de la regla\n"
         << "  -MP               Anade una regla vacia por dependencia\n"
@@ -125,10 +130,13 @@ int main(int argc, char* argv[]) {
     std::string marker;
     bool        emitir_deps = false;
     bool        solo_deps   = false;
+    bool        deps_sin_sistema = false;
     std::string deps_file;
     vpp::DepsOptions deps_opts;
     bool        use_cache = true;
     std::vector<std::string> include_paths;
+    std::vector<std::string> system_include_paths;
+    std::vector<std::string> undefines;
     std::vector<std::string> import_paths;
     bool line_markers = false;
     bool no_expand    = false;
@@ -166,6 +174,21 @@ int main(int argc, char* argv[]) {
             }
             continue;
         }
+        // Ruta de sistema: se busca DESPUES de las propias, y lo que aparezca
+        // en ella queda marcado como ajeno para `-MM`.
+        if (std::strcmp(argv[i], "-isystem") == 0 && i + 1 < argc) {
+            system_include_paths.push_back(argv[++i]);
+            continue;
+        }
+        // Quitar una macro.  Se admite `-U NAME` y `-UNAME`, como cc.
+        if (std::strncmp(argv[i], "-U", 2) == 0) {
+            if (argv[i][2] != '\0') {
+                undefines.push_back(argv[i] + 2);
+            } else if (i + 1 < argc) {
+                undefines.push_back(argv[++i]);
+            }
+            continue;
+        }
         if (std::strncmp(argv[i], "-I", 2) == 0) {
             if (argv[i][2] != '\0') {
                 include_paths.push_back(argv[i] + 2);
@@ -188,6 +211,17 @@ int main(int argc, char* argv[]) {
         if (std::strcmp(argv[i], "--deps") == 0) {
             emitir_deps = true;
             solo_deps   = true;
+            continue;
+        }
+        if (std::strcmp(argv[i], "-MM") == 0) {
+            emitir_deps  = true;
+            solo_deps    = true;
+            deps_sin_sistema = true;
+            continue;
+        }
+        if (std::strcmp(argv[i], "-MMD") == 0) {
+            emitir_deps      = true;
+            deps_sin_sistema = true;
             continue;
         }
         if (std::strcmp(argv[i], "-MD") == 0) {
@@ -301,6 +335,8 @@ int main(int argc, char* argv[]) {
     opts.emit_line_markers = line_markers;
     opts.expand_macros     = !no_expand;
     opts.include_paths     = include_paths;
+    opts.system_include_paths = system_include_paths;
+    opts.undefines            = undefines;
     opts.import_paths      = import_paths;
     opts.predefines        = defines;
     opts.predef_sources    = predef_sources;
@@ -343,7 +379,9 @@ int main(int argc, char* argv[]) {
     // sea SOLO la regla: es lo que espera quien la canaliza a un fichero.
     if (emitir_deps) {
         const std::string regla = vpp::format_make_deps(
-            output_file, input_file, pp.included_files(), deps_opts);
+            output_file, input_file,
+            deps_sin_sistema ? pp.user_included_files() : pp.included_files(),
+            deps_opts);
 
         if (deps_file.empty()) {
             std::cout << regla;
