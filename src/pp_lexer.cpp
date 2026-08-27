@@ -289,6 +289,14 @@ void PPLexer::scan_text_line(std::vector<PPToken>& out) {
             text_buf += ' '; // la continuacion se reemplaza por espacio
             continue;
         }
+        // numeros: tienen que salir como UN token, o el pegado con ## los parte
+        if (std::isdigit((unsigned char)peek()) ||
+            (peek() == '.' && std::isdigit((unsigned char)peek(1)))) {
+            flush_text();
+            out.push_back(scan_pp_number());
+            text_start = loc();
+            continue;
+        }
         // identificadores: candidatos a expansion de macro
         if (std::isalpha((unsigned char)peek()) || peek() == '_') {
             flush_text();
@@ -460,6 +468,39 @@ PPToken PPLexer::scan_ident() {
         s += advance();
     }
     return PPToken(PPTokenType::IDENT, std::move(s), l);
+}
+
+PPToken PPLexer::scan_pp_number() {
+    SourceLocation l = loc();
+    std::string s;
+
+    // Regla de "numero de preprocesado" del estandar de C: empieza por digito
+    // (o por punto seguido de digito) y a partir de ahi absorbe digitos,
+    // letras, guiones bajos, puntos y el signo que sigue a e/E/p/P.
+    //
+    // Es mas amplia que "un numero" a proposito: 200112L, 1.5e-9 y hasta 0x1p+3
+    // son UN token.  Partirlos rompe el pegado con ##, que junta el ultimo
+    // token de un lado con el PRIMERO del otro: con `200112L` partido en
+    // `200112` y `L`, un `___X_##v` producia `___X_200112` mas una `L` suelta,
+    // y el resultado ya no coincidia con ninguna macro.  Es lo que impedia
+    // preprocesar las cabeceras del SDK de macOS.
+    if (peek() == '.') s += advance();
+    while (!at_end()) {
+        const char c = peek();
+        if (std::isdigit(static_cast<unsigned char>(c)) ||
+            std::isalpha(static_cast<unsigned char>(c)) ||
+            c == '_' || c == '.') {
+            // el signo solo cuenta si viene detras de un exponente
+            const bool exp = (c == 'e' || c == 'E' || c == 'p' || c == 'P');
+            s += advance();
+            if (exp && !at_end() && (peek() == '+' || peek() == '-')) {
+                s += advance();
+            }
+            continue;
+        }
+        break;
+    }
+    return PPToken(PPTokenType::NUMBER, std::move(s), l);
 }
 
 PPToken PPLexer::scan_number() {

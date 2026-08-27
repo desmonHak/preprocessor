@@ -144,6 +144,17 @@ private:
      * @brief Escanea un literal numerico desde la posicion actual.
      * @return Token NUMBER con el valor textual del numero.
      */
+    /**
+     * @brief Escanea un "numero de preprocesado" segun la regla del estandar.
+     *
+     * Mas amplia que la de un numero: absorbe letras, guiones bajos, puntos y
+     * el signo que sigue a un exponente, de modo que 200112L o 1.5e-9 son UN
+     * solo token.  Partirlos rompe el pegado con ##.
+     *
+     * @return Token NUMBER con el literal completo.
+     */
+    PPToken scan_pp_number();
+
     PPToken scan_number();
 
     /**
