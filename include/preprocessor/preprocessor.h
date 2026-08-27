@@ -11,6 +11,7 @@
 #include "pp_lexer.h"
 #include "pp_capabilities.h"
 #include "pp_include.h"
+#include "pp_source_map.h"
 #include <string>
 #include <vector>
 #include <unordered_set>
@@ -221,6 +222,13 @@ public:
     std::vector<std::string> user_included_files() const;
 
     /**
+     * @brief Los fuentes leidos, para poder citarlos en un diagnostico.
+     *
+     * @return El almacen de fuentes.
+     */
+    const SourceMap& sources() const noexcept { return m_sources; }
+
+    /**
      * @brief Acceso a las opciones del preprocesador (modificables antes de process).
      * @return Referencia a las opciones.
      */
@@ -346,6 +354,9 @@ private:
      * devuelve included_files(), que es API publica.
      */
     std::unordered_set<std::string> m_system_includes;
+
+    /// Texto de cada fuente leido, para citarlo en los diagnosticos.
+    SourceMap                       m_sources;
 
     /**
      * @brief Remapeo de posicion instalado por `#line`.

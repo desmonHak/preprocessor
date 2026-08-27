@@ -18,6 +18,14 @@
 
 #include "preprocessor/preprocessor.h"
 #include "preprocessor/pp_deps.h"
+#include "preprocessor/pp_diag_render.h"
+
+#include <cstdlib>
+#ifdef _WIN32
+    #include <io.h>
+#else
+    #include <unistd.h>
+#endif
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -119,6 +127,24 @@ static void add_auto_stdlib(std::vector<std::string>& import_paths, const char* 
     } catch (...) {}
 }
 
+
+/**
+ * @brief Decide si conviene resaltar la salida de error.
+ *
+ * Solo si va a una terminal.  Redirigida a un fichero o a otro programa, las
+ * secuencias ANSI son basura que ensucia lo que despues alguien tiene que leer
+ * o parsear.  Se respeta ademas NO_COLOR, que es la convencion para apagarlo.
+ *
+ * @return true si se debe colorear.
+ */
+static bool salida_con_color() {
+    if (std::getenv("NO_COLOR") != nullptr) return false;
+#ifdef _WIN32
+    return _isatty(_fileno(stderr)) != 0;
+#else
+    return isatty(fileno(stderr)) != 0;
+#endif
+}
 int main(int argc, char* argv[]) {
     // --- parsear argumentos de la linea de comandos ---
     std::string input_file;
@@ -323,8 +349,16 @@ int main(int argc, char* argv[]) {
 
     // --- configurar el preprocesador ---
     bool had_error = false;
-    vpp::Preprocessor pp([&had_error](const vpp::Diagnostic& d) {
-        std::cerr << d.format() << '\n';
+    /* El diagnostico se guarda y se imprime al final, no aqui.
+     *
+     * Para citar la linea culpable hace falta el fuente, y el preprocesador
+     * todavia lo esta leyendo cuando emite el mensaje.  Guardarlos y sacarlos
+     * despues es lo que permite ensenar el contexto; y de paso salen en orden
+     * aunque la salida vaya al mismo sitio. */
+    const bool usar_color = salida_con_color();
+    std::vector<vpp::Diagnostic> diagnosticos;
+    vpp::Preprocessor pp([&had_error, &diagnosticos](const vpp::Diagnostic& d) {
+        diagnosticos.push_back(d);
         if (d.level >= vpp::DiagLevel::ERR) had_error = true;
     });
 
@@ -367,12 +401,18 @@ int main(int argc, char* argv[]) {
     // --- procesar ---
     std::string result = pp.process(source, filename);
 
+    /* Ahora si se imprimen: los fuentes ya estan leidos y cada mensaje puede
+     * citar su linea.  Va ANTES de rendirse por los errores, que si no los
+     * mensajes que explican el fallo no llegarian a verse. */
+    for (const auto& d : diagnosticos) {
+        std::cerr << vpp::render_diagnostic(d, pp.sources(), usar_color) << '\n';
+    }
+
     if (had_error) {
         std::cerr << "vpp: preprocesamiento fallido con "
                   << pp.diagnostics().error_count() << " error(es)\n";
         return 1;
     }
-
     // --- lista de dependencias ---
     //
     // Se escribe antes que la salida para que, con `-M`, lo que llegue a stdout

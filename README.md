@@ -1270,6 +1270,30 @@ Para limpiarla, se borra el directorio.  La version del formato va en el nombre
 (`v1/`), asi que un cambio de formato deja lo viejo donde esta en lugar de
 leerlo mal.
 
+
+---
+
+## Diagnosticos
+
+Un mensaje cita la linea que lo provoco y senala la columna:
+
+```
+t.c:2:1: error: directiva de preprocesador desconocida: #defien
+   2 | #defien FOO 1
+     | ^
+```
+
+Es la diferencia entre un diagnostico que se arregla y uno que se investiga.  Se
+resalta con color solo cuando la salida de error va a una terminal -- redirigida
+a un fichero, las secuencias ANSI son basura para quien despues lo lea o lo
+parsee -- y se respeta `NO_COLOR`.
+
+Si el fuente no esta disponible se da el mensaje de siempre sin adornos.  Pasa
+con lo que no viene del disco: la API, la entrada estandar, un `#exec`.
+
+Los tabuladores del original se reproducen en la linea del cursor en lugar de
+contarlos como un caracter; con espacios, el cursor acabaria senalando a otro
+sitio, que es peor que no ponerlo.
 ---
 
 ## Dependencias para el build
@@ -1729,6 +1753,7 @@ ctest --output-on-failure -V
 ./vpp_test_facts_cache     ; memoria entre ejecuciones
 ./vpp_test_dialect         ; marcador de directiva por fichero
 ./vpp_test_deps            ; lista de dependencias para el build
+./vpp_test_diag_render     ; diagnosticos con contexto
 ```
 
 ### Integracion continua
@@ -1806,6 +1831,7 @@ omiten en vez de dar un rojo que no dice nada del codigo.
 | `vpp_test_include_search` | Busqueda de inclusiones: precedencia de rutas, vecino relativo, `#include_next` |
 | `vpp_test_dialect`     | Marcador de directiva declarado en el fichero, y que una errata siga siendo error |
 | `vpp_test_deps`        | Lista de dependencias: objetivo, escapado, partido de lineas y objetivos ficticios |
+| `vpp_test_diag_render` | Diagnosticos con contexto: cita de la linea, posicion del cursor y tabuladores |
 | `vpp_test_compiler_id` | Identificacion del compilador: extraer el ejecutable, buscarlo por el PATH, y que la huella cambie al cambiar el binario o los flags |
 | `vpp_test_facts_cache` | Memoria entre ejecuciones: persistencia, separacion por compilador, fusion de escrituras y lo que se niega a guardar |
 
@@ -1910,6 +1936,8 @@ preprocessor/
 |       +-- pp_compiler_id.h   identidad del compilador (clave de la memoria)
 |       +-- pp_facts_cache.h   memoria de respuestas cortas, por compilador
 |       +-- pp_command_cache.h memoria de la salida de un comando
+|       +-- pp_diag_render.h    diagnosticos con la linea y el cursor
+|       +-- pp_source_map.h     texto de cada fuente, para citarlo
 |       +-- pp_diagnostics.h  sistema de errores y advertencias
 |       +-- preprocessor.h    clase principal (API en C++)
 |       +-- vpp_c.h           ABI en C, estable entre compiladores
@@ -1928,6 +1956,8 @@ preprocessor/
 |   +-- pp_compiler_id.cpp
 |   +-- pp_facts_cache.cpp
 |   +-- pp_command_cache.cpp
+|   +-- pp_diag_render.cpp
+|   +-- pp_source_map.cpp
 |   +-- pp_diagnostics.cpp
 |   +-- preprocessor.cpp      eval_array_def, eval_exec, eval_set
 |   +-- vpp_c.cpp             implementacion del ABI en C
@@ -1946,6 +1976,7 @@ preprocessor/
 |   +-- test_c_api.cpp            tests del ABI en C
 |   +-- test_include_search.cpp   tests de la busqueda de inclusiones
 |   +-- test_deps.cpp             tests de la lista de dependencias
+|   +-- test_diag_render.cpp      tests de los diagnosticos con contexto
 |   +-- test_dialect.cpp          tests del marcador de directiva
 |   +-- test_compiler_id.cpp      tests de la identidad del compilador
 |   +-- test_facts_cache.cpp      tests de la memoria entre ejecuciones

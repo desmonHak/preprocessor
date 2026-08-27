@@ -357,6 +357,7 @@ std::string Preprocessor::process(const std::string& source,
     LexerOptions lex_opts = m_opts.lexer;
     apply_dialect_line(source, lex_opts, filename, m_diag);
 
+    m_sources.add(filename, source);
     PPLexer lexer(source, filename, m_diag, lex_opts);
     auto tokens = lexer.tokenize();
 
@@ -675,6 +676,7 @@ void Preprocessor::eval_include(const IncludeNode& node, std::string& output) {
     apply_dialect_line(content, lex_opts,
                        hallado.path.empty() ? ruta : hallado.path, m_diag);
 
+    m_sources.add(hallado.path.empty() ? ruta : hallado.path, content);
     PPLexer lexer(content, hallado.path.empty() ? ruta : hallado.path,
                   m_diag, lex_opts);
     auto tokens = lexer.tokenize();
