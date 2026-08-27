@@ -11,6 +11,7 @@
  */
 
 #include "preprocessor/vpp_c.h"
+#include "preprocessor/pp_deps.h"
 #include "preprocessor/preprocessor.h"
 
 #include <cstring>
@@ -33,6 +34,16 @@ struct vpp_preprocessor_s {
     vpp::Preprocessor       pp;            ///< Nucleo C++ del preprocesador
     vpp_include_resolver_fn resolver_fn;   ///< Resolvedor C instalado, o nullptr
     void*                   resolver_user; ///< Puntero opaco del usuario
+
+    /**
+     * @brief Copia de los ficheros propios, para poder prestar sus punteros.
+     *
+     * La lista de los que NO son de sistema se calcula filtrando, asi que el
+     * nucleo la devuelve por valor.  Prestar el c_str() de un temporal seria
+     * devolver un puntero colgante, de modo que se guarda aqui y vive lo que el
+     * handle, igual que el resto de lo que este ABI presta.
+     */
+    std::vector<std::string> user_files;
 
     /** @brief Constructor: sin resolvedor instalado por defecto. */
     vpp_preprocessor_s()
@@ -366,6 +377,148 @@ extern "C" VPP_API const char* vpp_included_file_at(const vpp_preprocessor* pp,
     const std::vector<std::string>& files = pp->pp.included_files();
     if (index >= files.size()) return nullptr;
     return files[index].c_str();
+}
+
+extern "C" VPP_API vpp_status vpp_add_system_include_path(vpp_preprocessor* pp,
+                                                          const char* path) {
+    if (!pp || !path) return VPP_ERR_INVALID_ARG;
+    try {
+        pp->pp.options().system_include_paths.push_back(path);
+        return VPP_OK;
+    } catch (...) {
+        return VPP_ERR_OOM;
+    }
+}
+
+extern "C" VPP_API vpp_status vpp_add_undefine(vpp_preprocessor* pp,
+                                               const char* name) {
+    if (!pp || !name) return VPP_ERR_INVALID_ARG;
+    try {
+        pp->pp.options().undefines.push_back(name);
+        return VPP_OK;
+    } catch (...) {
+        return VPP_ERR_OOM;
+    }
+}
+
+extern "C" VPP_API vpp_status vpp_set_capabilities_command(vpp_preprocessor* pp,
+                                                           const char* command) {
+    if (!pp) return VPP_ERR_INVALID_ARG;
+    try {
+        pp->pp.options().capabilities_command = command ? command : "";
+        return VPP_OK;
+    } catch (...) {
+        return VPP_ERR_OOM;
+    }
+}
+
+extern "C" VPP_API vpp_status vpp_set_cache_dir(vpp_preprocessor* pp,
+                                                const char* dir) {
+    if (!pp) return VPP_ERR_INVALID_ARG;
+    try {
+        pp->pp.options().cache_dir = dir ? dir : "";
+        return VPP_OK;
+    } catch (...) {
+        return VPP_ERR_OOM;
+    }
+}
+
+extern "C" VPP_API vpp_status vpp_set_use_cache(vpp_preprocessor* pp,
+                                                int enable) {
+    if (!pp) return VPP_ERR_INVALID_ARG;
+    pp->pp.options().use_cache = (enable != 0);
+    return VPP_OK;
+}
+
+extern "C" VPP_API vpp_status vpp_set_directive_marker(vpp_preprocessor* pp,
+                                                       const char* marker) {
+    if (!pp) return VPP_ERR_INVALID_ARG;
+    try {
+        // Vacio o NULL se toma como "el de siempre": dejarlo de verdad vacio
+        // apagaria las directivas del todo, que no es lo que nadie quiere decir
+        // al no pasar un marcador.
+        pp->pp.options().lexer.directive_marker =
+            (marker && *marker) ? marker : "#";
+        return VPP_OK;
+    } catch (...) {
+        return VPP_ERR_OOM;
+    }
+}
+
+extern "C" VPP_API vpp_status vpp_set_comment_syntax(vpp_preprocessor* pp,
+                                                     const char* line,
+                                                     const char* block_open,
+                                                     const char* block_close) {
+    if (!pp) return VPP_ERR_INVALID_ARG;
+    try {
+        vpp::LexerOptions& o = pp->pp.options().lexer;
+
+        // NULL deja la secuencia como estaba; una cadena VACIA apaga ese tipo de
+        // comentario.  Son dos intenciones distintas y por eso se distinguen.
+        if (line) {
+            o.line_comment        = line;
+            o.strip_line_comments = (*line != '\0');
+        }
+        if (block_open) {
+            o.block_comment_open   = block_open;
+            o.strip_block_comments = (*block_open != '\0');
+        }
+        if (block_close) o.block_comment_close = block_close;
+        return VPP_OK;
+    } catch (...) {
+        return VPP_ERR_OOM;
+    }
+}
+
+extern "C" VPP_API vpp_status vpp_set_quote_syntax(vpp_preprocessor* pp,
+                                                   int strings,
+                                                   int char_literals) {
+    if (!pp) return VPP_ERR_INVALID_ARG;
+    pp->pp.options().lexer.strings       = (strings != 0);
+    pp->pp.options().lexer.char_literals = (char_literals != 0);
+    return VPP_OK;
+}
+
+extern "C" VPP_API size_t vpp_user_included_file_count(
+        const vpp_preprocessor* pp) {
+    if (!pp) return 0;
+    try {
+        // Se recalcula aqui y se guarda en el handle: es lo que hace que los
+        // punteros que devuelve el accesor sigan siendo validos.
+        auto* self = const_cast<vpp_preprocessor*>(pp);
+        self->user_files = pp->pp.user_included_files();
+        return self->user_files.size();
+    } catch (...) {
+        return 0;
+    }
+}
+
+extern "C" VPP_API const char* vpp_user_included_file_at(
+        const vpp_preprocessor* pp, size_t index) {
+    if (!pp) return nullptr;
+    if (index >= pp->user_files.size()) return nullptr;
+    return pp->user_files[index].c_str();
+}
+
+extern "C" VPP_API char* vpp_format_deps(const vpp_preprocessor* pp,
+                                         const char* target,
+                                         const char* source,
+                                         int skip_system,
+                                         int phony_targets) {
+    if (!pp || !source) return nullptr;
+    try {
+        vpp::DepsOptions opts;
+        if (target) opts.target = target;
+        opts.phony_targets = (phony_targets != 0);
+
+        const std::vector<std::string> deps =
+            skip_system ? pp->pp.user_included_files()
+                        : pp->pp.included_files();
+
+        return dup_to_c(vpp::format_make_deps("", source, deps, opts));
+    } catch (...) {
+        return nullptr;
+    }
 }
 
 /* --- inspeccion de macros -------------------------------------------------- */

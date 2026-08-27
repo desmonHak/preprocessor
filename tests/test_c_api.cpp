@@ -376,6 +376,162 @@ static void test_options() {
 
 /* --- main ----------------------------------------------------------------- */
 
+/* --- lo que el ABI no exponia --------------------------------------------- */
+
+/**
+ * @brief Quitar una macro desde el ABI.
+ *
+ * Es la mitad que faltaba de vpp_add_define: sin ella no se podia cancelar lo
+ * que trae el volcado de un compilador.
+ */
+static void test_undefine() {
+    vpp_preprocessor* pp = vpp_create();
+    char* out = nullptr;
+
+    CHECK(vpp_add_define(pp, "A")   == VPP_OK, "se define A");
+    CHECK(vpp_add_undefine(pp, "A") == VPP_OK, "y se quita");
+
+    vpp_process(pp, "#ifdef A\nsi\n#else\nno\n#endif\n", "t.c", &out);
+    CHECK(out && contains(out, "no"), "la macro queda sin definir");
+
+    vpp_string_free(out);
+    vpp_destroy(pp);
+
+    CHECK(vpp_add_undefine(nullptr, "A") == VPP_ERR_INVALID_ARG,
+          "vpp_add_undefine rechaza un handle NULL");
+}
+
+/**
+ * @brief El marcador de directiva desde el ABI.
+ *
+ * Es lo que permite usar vpp como biblioteca con un lenguaje donde `#` no marca
+ * directivas: sin esto, cada comentario de Python se tomaba por una directiva
+ * desconocida y la linea desaparecia.
+ */
+static void test_directive_marker() {
+    vpp_preprocessor* pp = vpp_create();
+    char* out = nullptr;
+
+    CHECK(vpp_set_directive_marker(pp, "%") == VPP_OK, "se fija el marcador");
+
+    vpp_process(pp, "# comentario de Python\n%define N 7\nvalor N\n",
+                "t.py", &out);
+
+    CHECK(out && contains(out, "# comentario de Python"),
+          "el comentario del lenguaje sobrevive");
+    CHECK(out && contains(out, "valor 7"),
+          "y la directiva con el marcador nuevo se aplica");
+
+    vpp_string_free(out);
+    vpp_destroy(pp);
+}
+
+/** @brief Un marcador nulo deja el de siempre, no apaga las directivas. */
+static void test_marker_nulo() {
+    vpp_preprocessor* pp = vpp_create();
+    char* out = nullptr;
+
+    CHECK(vpp_set_directive_marker(pp, nullptr) == VPP_OK, "acepta NULL");
+    vpp_process(pp, "#define A 3\nvalor A\n", "t.c", &out);
+    CHECK(out && contains(out, "valor 3"),
+          "con marcador NULL siguen funcionando las directivas de siempre");
+
+    vpp_string_free(out);
+    vpp_destroy(pp);
+}
+
+/** @brief Comentarios y comillas del lenguaje desde el ABI. */
+static void test_sintaxis_del_lenguaje() {
+    vpp_preprocessor* pp = vpp_create();
+    char* out = nullptr;
+
+    vpp_set_directive_marker(pp, "%");
+    CHECK(vpp_set_comment_syntax(pp, "--", nullptr, nullptr) == VPP_OK,
+          "se declara el comentario de linea");
+    CHECK(vpp_set_quote_syntax(pp, 1, 0) == VPP_OK,
+          "y se apagan los literales de caracter");
+
+    vpp_process(pp,
+                "%define N 5\n"
+                "-- comentario que menciona N\n"
+                "local x = N\n"
+                "It's fine\n",
+                "t.lua", &out);
+
+    CHECK(out && !contains(out, "comentario que menciona"),
+          "el comentario del lenguaje se descarta");
+    CHECK(out && contains(out, "local x = 5"), "y el codigo se expande");
+    CHECK(out && contains(out, "It's fine"),
+          "y un apostrofo ya no rompe nada");
+
+    vpp_string_free(out);
+    vpp_destroy(pp);
+}
+
+/**
+ * @brief La regla de dependencias desde el ABI.
+ *
+ * Es lo que necesita quien integra vpp en un build: sin ella no puede saber que
+ * rehacer cuando cambia una cabecera.
+ */
+static void test_deps() {
+    vpp_preprocessor* pp = vpp_create();
+    char* out = nullptr;
+
+    vpp_process(pp, "int main(void) { return 0; }\n", "main.c", &out);
+    vpp_string_free(out);
+
+    char* regla = vpp_format_deps(pp, "main.o", "main.c", 0, 0);
+    CHECK(regla != nullptr,                     "se construye la regla");
+    CHECK(regla && contains(regla, "main.o:"),  "con su objetivo");
+    CHECK(regla && contains(regla, "main.c"),   "y el fuente como dependencia");
+    vpp_string_free(regla);
+
+    CHECK(vpp_format_deps(nullptr, "x", "y", 0, 0) == nullptr,
+          "con handle NULL devuelve NULL");
+    CHECK(vpp_format_deps(pp, "x", nullptr, 0, 0) == nullptr,
+          "y sin fuente tambien");
+
+    vpp_destroy(pp);
+}
+
+/** @brief La memoria y el compilador de destino se configuran desde el ABI. */
+static void test_cache_y_capacidades() {
+    vpp_preprocessor* pp = vpp_create();
+
+    CHECK(vpp_set_use_cache(pp, 0) == VPP_OK,       "se apaga la memoria");
+    CHECK(vpp_set_cache_dir(pp, nullptr) == VPP_OK, "acepta un directorio NULL");
+    CHECK(vpp_set_capabilities_command(pp, nullptr) == VPP_OK,
+          "y quitar el compilador de destino");
+    CHECK(vpp_add_system_include_path(pp, ".") == VPP_OK,
+          "se anade una ruta de sistema");
+
+    CHECK(vpp_set_use_cache(nullptr, 0) == VPP_ERR_INVALID_ARG,
+          "y todas rechazan un handle NULL");
+    CHECK(vpp_add_system_include_path(pp, nullptr) == VPP_ERR_INVALID_ARG,
+          "y una ruta NULL");
+
+    vpp_destroy(pp);
+}
+
+/** @brief La lista de ficheros propios se puede recorrer desde el ABI. */
+static void test_ficheros_propios() {
+    vpp_preprocessor* pp = vpp_create();
+    char* out = nullptr;
+
+    vpp_process(pp, "int x;\n", "t.c", &out);
+    vpp_string_free(out);
+
+    CHECK(vpp_user_included_file_count(pp) == 0u,
+          "sin inclusiones la lista esta vacia");
+    CHECK(vpp_user_included_file_at(pp, 0) == nullptr,
+          "y pedir un indice fuera de rango devuelve NULL");
+    CHECK(vpp_user_included_file_count(nullptr) == 0u,
+          "con handle NULL devuelve 0");
+
+    vpp_destroy(pp);
+}
+
 int main() {
     std::cout << "=== Tests del ABI en C del preprocesador vpp ===\n";
 
@@ -394,6 +550,13 @@ int main() {
     test_process_file_missing();
     test_status_string();
     test_options();
+    test_undefine();
+    test_directive_marker();
+    test_marker_nulo();
+    test_sintaxis_del_lenguaje();
+    test_deps();
+    test_cache_y_capacidades();
+    test_ficheros_propios();
 
     std::cout << "\nResultados: " << tests_passed << " pasados, "
               << tests_failed  << " fallados\n";

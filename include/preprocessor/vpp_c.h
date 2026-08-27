@@ -372,6 +372,150 @@ VPP_API size_t vpp_included_file_count(const vpp_preprocessor* pp);
 VPP_API const char* vpp_included_file_at(const vpp_preprocessor* pp,
                                          size_t index);
 
+/**
+ * @brief Agrega una ruta de sistema (equivale a -isystem).
+ *
+ * Se busca DESPUES de las de vpp_add_include_path, que es el orden de cc, y lo
+ * que aparezca en ella queda marcado como ajeno.  Eso es lo que permite pedir
+ * despues solo las dependencias propias.
+ *
+ * @param pp   Handle.
+ * @param path Ruta del directorio.
+ * @return VPP_OK o VPP_ERR_INVALID_ARG.
+ */
+VPP_API vpp_status vpp_add_system_include_path(vpp_preprocessor* pp,
+                                               const char* path);
+
+/**
+ * @brief Quita una macro antes de procesar (equivale a -U).
+ *
+ * Se aplica DESPUES de las definiciones y de los conjuntos precargados, que es
+ * para lo que sirve: cancelar algo que trae el volcado de un compilador.
+ *
+ * @param pp   Handle.
+ * @param name Nombre de la macro.
+ * @return VPP_OK o VPP_ERR_INVALID_ARG.
+ */
+VPP_API vpp_status vpp_add_undefine(vpp_preprocessor* pp, const char* name);
+
+/**
+ * @brief Fija con que preguntar por las capacidades del compilador de destino.
+ *
+ * Los operadores `__has_builtin` y companeros preguntan por lo que sabe hacer un
+ * COMPILADOR, no por una macro.  Sin esto valen 0, que es la respuesta honesta
+ * cuando no hay a quien preguntar.
+ *
+ * @param pp      Handle.
+ * @param command Orden de invocacion, p.ej. "gcc -E -P -x c".  NULL la quita.
+ * @return VPP_OK o VPP_ERR_INVALID_ARG.
+ */
+VPP_API vpp_status vpp_set_capabilities_command(vpp_preprocessor* pp,
+                                                const char* command);
+
+/**
+ * @brief Donde recordar entre ejecuciones lo que contesta el compilador.
+ *
+ * Preguntarselo cuesta lanzar un proceso, y la misma pregunta se repite en cada
+ * fichero de una compilacion.  NULL o cadena vacia significa el sitio por
+ * omision.
+ *
+ * @param pp  Handle.
+ * @param dir Directorio.
+ * @return VPP_OK o VPP_ERR_INVALID_ARG.
+ */
+VPP_API vpp_status vpp_set_cache_dir(vpp_preprocessor* pp, const char* dir);
+
+/**
+ * @brief Activa o desactiva esa memoria.
+ * @param pp     Handle.
+ * @param enable 0 para no recordar nada entre ejecuciones.
+ * @return VPP_OK o VPP_ERR_INVALID_ARG.
+ */
+VPP_API vpp_status vpp_set_use_cache(vpp_preprocessor* pp, int enable);
+
+/**
+ * @brief Fija lo que marca el comienzo de una directiva.
+ *
+ * `#` es el de C y el de por omision, pero vpp no es un preprocesador de C: en
+ * Python, shell o Make el `#` es un COMENTARIO.  El fichero puede declarar el
+ * suyo, y esa declaracion GANA sobre lo que se fije aqui, por ser mas concreta.
+ *
+ * @param pp     Handle.
+ * @param marker Marcador; NULL o vacio lo deja en el de por omision.
+ * @return VPP_OK o VPP_ERR_INVALID_ARG.
+ */
+VPP_API vpp_status vpp_set_directive_marker(vpp_preprocessor* pp,
+                                            const char* marker);
+
+/**
+ * @brief Fija las secuencias de comentario del lenguaje.
+ *
+ * Declararlas no es lo mismo que apagarlas: apagadas, el comentario sale como
+ * texto y una macro mencionada dentro SI se expande.  Un argumento NULL deja esa
+ * secuencia como estaba; una cadena vacia apaga ese tipo de comentario.
+ *
+ * @param pp          Handle.
+ * @param line        Comentario de linea, p.ej. "--".
+ * @param block_open  Apertura de bloque, p.ej. "--[[".
+ * @param block_close Su cierre, p.ej. "]]".
+ * @return VPP_OK o VPP_ERR_INVALID_ARG.
+ */
+VPP_API vpp_status vpp_set_comment_syntax(vpp_preprocessor* pp,
+                                          const char* line,
+                                          const char* block_open,
+                                          const char* block_close);
+
+/**
+ * @brief Activa o desactiva el tratamiento de comillas del lenguaje.
+ *
+ * Apagarlas hace falta en texto llano o donde las comillas no delimiten nada:
+ * con el tratamiento de C, una frase como `It's a test` falla con "literal sin
+ * cerrar".  No afecta a las directivas, donde rige siempre la sintaxis de vpp.
+ *
+ * @param pp             Handle.
+ * @param strings        0 para que `"` sea texto corriente.
+ * @param char_literals  0 para que `'` lo sea.
+ * @return VPP_OK o VPP_ERR_INVALID_ARG.
+ */
+VPP_API vpp_status vpp_set_quote_syntax(vpp_preprocessor* pp,
+                                        int strings,
+                                        int char_literals);
+
+/**
+ * @brief Cuantos de los ficheros incluidos NO vienen de una ruta de sistema.
+ * @param pp Handle.
+ * @return Conteo, o 0 si pp es NULL.
+ */
+VPP_API size_t vpp_user_included_file_count(const vpp_preprocessor* pp);
+
+/**
+ * @brief Ruta del fichero propio incluido en la posicion dada.
+ * @param pp    Handle.
+ * @param index Indice en [0, vpp_user_included_file_count).
+ * @return Ruta prestada, o NULL si el indice esta fuera de rango.
+ */
+VPP_API const char* vpp_user_included_file_at(const vpp_preprocessor* pp,
+                                              size_t index);
+
+/**
+ * @brief Construye la regla de make que declara de que depende el fuente.
+ *
+ * Es lo que permite que un build incremental sepa que rehacer cuando cambia una
+ * cabecera.  El formato es el de cc, comprobado byte a byte contra el suyo.
+ *
+ * @param pp            Handle, ya procesado.
+ * @param target        Nombre del objetivo; NULL o vacio para deducirlo.
+ * @param source        Fuente principal, que tambien es dependencia.
+ * @param skip_system   1 para dejar fuera las cabeceras de sistema (como -MM).
+ * @param phony_targets 1 para anadir una regla vacia por dependencia (como -MP).
+ * @return Cadena que hay que liberar con vpp_string_free, o NULL si falla.
+ */
+VPP_API char* vpp_format_deps(const vpp_preprocessor* pp,
+                              const char* target,
+                              const char* source,
+                              int skip_system,
+                              int phony_targets);
+
 /* --- inspeccion de macros -------------------------------------------------- */
 
 /**

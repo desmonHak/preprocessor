@@ -1492,6 +1492,26 @@ ahorra el trabajo intermedio.
 
 ---
 
+
+### Lo que se configura desde el ABI
+
+Todo lo que hace la linea de ordenes:
+
+| Funcion | Equivale a |
+| :------ | :--------- |
+| `vpp_add_define` / `vpp_add_undefine` | `-D` / `-U` |
+| `vpp_add_include_path` / `vpp_add_system_include_path` | `-I` / `-isystem` |
+| `vpp_add_import_path` | `-M` |
+| `vpp_add_predef_text` / `_file` / `_command` | `--predef` / `--predef-from` |
+| `vpp_set_capabilities_command` | `--capabilities-from` |
+| `vpp_set_cache_dir` / `vpp_set_use_cache` | `--cache-dir` / `--no-cache` |
+| `vpp_set_directive_marker` | `--marker` |
+| `vpp_set_comment_syntax` / `vpp_set_quote_syntax` | los ajustes de dialecto |
+| `vpp_format_deps` | `--deps` / `-MM` / `-MT` / `-MP` |
+| `vpp_user_included_file_count` / `_at` | las dependencias propias |
+
+La declaracion que traiga el fichero (`vpp:marker=...`) GANA sobre lo que se
+fije aqui, por ser mas concreta -- igual que gana sobre `--marker`.
 ### Reglas de propiedad de memoria
 
 - Lo que devuelve `vpp_process` / `vpp_process_file` es **del llamante**: se
