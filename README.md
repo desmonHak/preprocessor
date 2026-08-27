@@ -6,10 +6,15 @@ con cualquier lenguaje de texto plano. Tambien actua como herramienta de
 construccion (builder), permitiendo ejecutar comandos del sistema y generar
 codigo durante el preprocesado.
 
-Implementa el preprocesador que exige el estandar de C -- y con el, el de C++ --
-por lo que ademas de su dialecto propio sirve para preprocesar codigo real: las
-cabeceras de la biblioteca estandar de ambos lenguajes pasan por el, y la salida
-compila y se ejecuta.  Eso se comprueba en cada build, no se afirma aqui (ver
+El marcador de directiva no esta cableado: `#` es el de C y el de por omision,
+pero el fichero puede declarar el suyo -- ver
+[Cualquier lenguaje](#cualquier-lenguaje-el-marcador-de-directiva) -- porque en
+Python, shell, Ruby o Make el `#` es un comentario y no una directiva.
+
+Implementa ademas el preprocesador que exige el estandar de C -- y con el, el de
+C++ -- de modo que sirve para preprocesar codigo real: las cabeceras de la
+biblioteca estandar de ambos lenguajes pasan por el, y la salida compila y se
+ejecuta.  Eso se comprueba en cada build, no se afirma aqui (ver
 [Conformidad con el preprocesador de C](#conformidad-con-el-preprocesador-de-c)).
 
 ---
@@ -91,6 +96,12 @@ valores distintos.
 #assert  expr [mensaje]                  error fatal en preprocesado si expr == 0
 #macro   NAME(p1, p2, ...) ... #endmacro macro multilinea (genera bloques de codigo)
 ```
+
+Lo que empieza por el marcador y no es ninguna de estas es un **error**, no un
+aviso: el marcador es inequivoco, asi que solo puede ser una equivocacion.  Si
+en tu lenguaje ese caracter no marca directivas, declaralo (ver
+[Cualquier lenguaje](#cualquier-lenguaje-el-marcador-de-directiva)) y esas
+lineas pasaran a ser texto.
 
 ### Directivas y operadores de C
 
@@ -1088,11 +1099,17 @@ vpp -DDEBUG -DVERSION=2 archivo.vel
 # Anadir rutas de busqueda para #include
 vpp -I ./include -I /usr/local/vesta/include archivo.vel
 
+# Marcador de directiva para un fichero que no se puede tocar
+vpp --marker % generado.py
+
 # Leer desde stdin
 echo "#define X 1\nX" | vpp --stdin
 
 # Emitir marcadores #line (util para depuracion)
 vpp --line-markers archivo.vel -o out.vel
+
+# Dejar el texto sin expandir (solo se atienden las directivas)
+vpp --no-expand archivo.txt
 
 # Ver version
 vpp --version
@@ -1623,6 +1640,7 @@ ctest --output-on-failure -V
 ./vpp_test_include_search  ; busqueda de inclusiones e #include_next
 ./vpp_test_compiler_id     ; identidad del compilador
 ./vpp_test_facts_cache     ; memoria entre ejecuciones
+./vpp_test_dialect         ; marcador de directiva por fichero
 ```
 
 ### Integracion continua
@@ -1794,6 +1812,8 @@ preprocessor/
 |       +-- pp_macro.h        tabla, arrays y motor de expansion de macros
 |       +-- pp_evaluator.h    evaluador de expresiones #if
 |       +-- pp_include.h      busqueda de #include, #include_next e #import
+|       +-- pp_dialect.h       el marcador de directiva que declara el fichero
+|       +-- pp_name_pool.h     nombres de fichero compartidos entre ubicaciones
 |       +-- pp_capabilities.h consulta al compilador objetivo para __has_*
 |       +-- pp_system.h        entorno y rutas de plataforma
 |       +-- pp_atomic_write.h  escribir un fichero sin que se lea a medias
@@ -1809,6 +1829,8 @@ preprocessor/
 |   +-- pp_macro.cpp          incluye registro de macros funcion integradas
 |   +-- pp_evaluator.cpp
 |   +-- pp_include.cpp
+|   +-- pp_dialect.cpp
+|   +-- pp_name_pool.cpp
 |   +-- pp_capabilities.cpp
 |   +-- pp_system.cpp
 |   +-- pp_atomic_write.cpp
@@ -1832,6 +1854,7 @@ preprocessor/
 |   +-- test_import.cpp           tests de #import
 |   +-- test_c_api.cpp            tests del ABI en C
 |   +-- test_include_search.cpp   tests de la busqueda de inclusiones
+|   +-- test_dialect.cpp          tests del marcador de directiva
 |   +-- test_compiler_id.cpp      tests de la identidad del compilador
 |   +-- test_facts_cache.cpp      tests de la memoria entre ejecuciones
 |   +-- check_exports.cmake       la biblioteca compartida solo exporta vpp_*
