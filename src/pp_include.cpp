@@ -35,8 +35,25 @@ bool read_file(const std::string& path, std::string& out) {
     const std::filesystem::path p(path);
     std::ifstream ifs(p, std::ios::binary);
     if (!ifs) return false;
-    out.assign((std::istreambuf_iterator<char>(ifs)),
-                std::istreambuf_iterator<char>());
+
+    // Se pide el tamano y se lee de una vez.  Recorrerlo con un iterador de
+    // streambuf -- que es lo que se hacia -- saca los caracteres DE UNO EN UNO
+    // y ademas hace crecer la cadena a base de reservas sucesivas.  Aqui se
+    // leen cabeceras de decenas de kilobytes, cientos de veces.
+    ifs.seekg(0, std::ios::end);
+    const std::streamoff tam = ifs.tellg();
+    if (tam > 0) {
+        out.resize(static_cast<std::size_t>(tam));
+        ifs.seekg(0, std::ios::beg);
+        ifs.read(&out[0], tam);
+        // Un fichero puede dar menos de lo que dijo -- por ejemplo si algo lo
+        // acorta entre las dos llamadas -- asi que la cadena se ajusta a lo que
+        // de verdad se leyo en lugar de dejar basura al final.
+        out.resize(static_cast<std::size_t>(ifs.gcount()));
+    } else {
+        out.clear();
+    }
+
     // Un fichero vacio es un fichero que EXISTE.  Distinguirlo importa: una
     // cabecera vacia es legitima, y confundirla con "no encontrado" hace que la
     // busqueda siga y acabe abriendo otra distinta.

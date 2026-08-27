@@ -1633,10 +1633,10 @@ Dos cosas dominaban el coste, y las dos se midieron con VTune antes y despues
 | de partida | 1283 ms | 15 773 478 |
 | nombres de fichero compartidos | 693 ms | 2 361 047 |
 | + inclusion multiple | 310 ms | |
-| + menos reservas y menos disco | **259 ms** | 776 470 |
+| + menos reservas y menos disco | **246 ms** | 776 470 |
 
 Como referencia, `gcc -E` hace lo mismo en 126 ms: se paso de 10x mas lento a
-2,1x.
+1,95x.
 
 **Nombres compartidos.**  Cada token lleva su ubicacion, y la ubicacion guardaba
 el nombre del fichero por valor.  Una ruta de cabecera pasa de los ochenta
