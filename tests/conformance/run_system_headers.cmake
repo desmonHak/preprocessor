@@ -12,7 +12,7 @@
 # preprocesado no de un solo error.
 #
 # Uso:
-#   cmake -DVPP=<ruta> -DCC=<ruta> -DWORK_DIR=<dir> -P run_system_headers.cmake
+#   cmake -DVPP=<ruta> -DCC=<ruta> -DWORK_DIR=<dir> [-DLANG=c|c++] -P run_system_headers.cmake
 
 if(NOT VPP OR NOT CC OR NOT WORK_DIR)
     message(FATAL_ERROR "faltan -DVPP=, -DCC= o -DWORK_DIR=")
@@ -20,10 +20,34 @@ endif()
 
 file(MAKE_DIRECTORY "${WORK_DIR}")
 
-# --- fuente de prueba -------------------------------------------------------
+# El lenguaje se parametriza en vez de duplicar el fichero: el recorrido es el
+# mismo -- preprocesar, compilar, ejecutar -- y solo cambian el fuente y como se
+# invoca al compilador.
+if(NOT LANG)
+    set(LANG "c")
+endif()
 
-set(SRC "${WORK_DIR}/sys_headers.c")
-file(WRITE "${SRC}"
+if(LANG STREQUAL "c++")
+    set(SRC "${WORK_DIR}/sys_headers.cpp")
+    set(ESPERADO "alpha:3")
+    # Cabeceras de la biblioteca estandar de C++, que son mucho mas exigentes
+    # que las de C: se apoyan en los operadores de prueba de caracteristicas y
+    # en #include_next para superponerse a las de C.
+    file(WRITE "${SRC}"
+"#include <string>\n"
+"#include <vector>\n"
+"#include <algorithm>\n"
+"#include <iostream>\n"
+"int main() {\n"
+"    std::vector<std::string> v{\"gamma\", \"alpha\", \"beta\"};\n"
+"    std::sort(v.begin(), v.end());\n"
+"    std::cout << v.front() << \":\" << v.size();\n"
+"    return 0;\n"
+"}\n")
+else()
+    set(SRC "${WORK_DIR}/sys_headers.c")
+    set(ESPERADO "vpp:3")
+    file(WRITE "${SRC}"
 "#include <stdio.h>\n"
 "#include <string.h>\n"
 "int main(void) {\n"
@@ -32,13 +56,14 @@ file(WRITE "${SRC}"
 "    printf(\"%s:%d\", buf, (int)strlen(buf));\n"
 "    return 0;\n"
 "}\n")
+endif()
 
 # --- rutas de inclusion del compilador de referencia ------------------------
 
 # Se le preguntan AL COMPILADOR en vez de adivinarlas: cambian con la version,
 # el sistema y la distribucion.
 execute_process(
-    COMMAND "${CC}" -E -Wp,-v -x c -
+    COMMAND "${CC}" -E -Wp,-v -x ${LANG} -
     INPUT_FILE  "${SRC}"
     OUTPUT_QUIET
     ERROR_VARIABLE cc_verbose
@@ -62,10 +87,16 @@ endif()
 
 # --- preprocesar con vpp ----------------------------------------------------
 
-set(PP_OUT "${WORK_DIR}/sys_headers.pp.c")
+set(PP_OUT "${WORK_DIR}/sys_headers.pp.${LANG}")
 
+# Se le pasan las dos cosas que necesita para verselas con cabeceras reales: las
+# macros que el compilador predefine, y con que resolver los operadores de
+# prueba de caracteristicas.  Sin lo segundo, cualquier libstdc++ moderno muere
+# en bits/version.h antes de llegar a ninguna parte.
 execute_process(
-    COMMAND "${VPP}" --predef-from "${CC} -dM -E -" ${INC_ARGS} "${SRC}"
+    COMMAND "${VPP}" --predef-from "${CC} -dM -E -x ${LANG} -"
+                     --capabilities-from "${CC} -E -P -x ${LANG}"
+                     ${INC_ARGS} "${SRC}"
     OUTPUT_FILE     "${PP_OUT}"
     ERROR_VARIABLE  pp_err
     RESULT_VARIABLE pp_rc)
@@ -118,7 +149,7 @@ message(STATUS "preprocesado: ${pp_size} bytes")
 set(EXE "${WORK_DIR}/sys_headers_prog")
 
 execute_process(
-    COMMAND "${CC}" -x c "${PP_OUT}" -o "${EXE}"
+    COMMAND "${CC}" -x ${LANG} "${PP_OUT}" -o "${EXE}"
     ERROR_VARIABLE  cc_err
     RESULT_VARIABLE cc_rc2)
 
@@ -133,7 +164,7 @@ if(NOT cc_rc2 EQUAL 0)
 " ";" _cerrs "${cc_err}")
     set(_ya "")
     foreach(_e IN LISTS _cerrs)
-        if(_e MATCHES "sys_headers\.pp\.c:([0-9]+):")
+        if(_e MATCHES "sys_headers\.pp\.[^:]+:([0-9]+):")
             set(_n "${CMAKE_MATCH_1}")
             list(FIND _ya "${_n}" _visto)
             if(_visto EQUAL -1)
@@ -166,7 +197,7 @@ if(NOT run_rc EQUAL 0)
 endif()
 
 string(STRIP "${run_out}" run_out)
-if(NOT run_out STREQUAL "vpp:3")
+if(NOT run_out STREQUAL "${ESPERADO}")
     message(FATAL_ERROR "salida inesperada del binario: '${run_out}'")
 endif()
 

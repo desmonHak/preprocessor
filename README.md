@@ -6,6 +6,12 @@ con cualquier lenguaje de texto plano. Tambien actua como herramienta de
 construccion (builder), permitiendo ejecutar comandos del sistema y generar
 codigo durante el preprocesado.
 
+Implementa el preprocesador que exige el estandar de C -- y con el, el de C++ --
+por lo que ademas de su dialecto propio sirve para preprocesar codigo real: las
+cabeceras de la biblioteca estandar de ambos lenguajes pasan por el, y la salida
+compila y se ejecuta.  Eso se comprueba en cada build, no se afirma aqui (ver
+[Conformidad con el preprocesador de C](#conformidad-con-el-preprocesador-de-c)).
+
 ---
 
 ## Caracteristicas
@@ -56,6 +62,7 @@ valores distintos.
 #undef   NAME                             elimina macro
 #include "archivo"                        incluir archivo (relativo)
 #include <archivo>                        incluir archivo (ruta de sistema)
+#include_next <archivo>                   reanuda la busqueda tras la ruta actual
 #if      expr                             condicional por expresion
 #ifdef   NAME                             condicional si esta definido
 #ifndef  NAME                             condicional si NO esta definido
@@ -119,6 +126,55 @@ forma poco intuitiva y conviene no olvidarlo:
 
 Un literal es sin signo si lleva sufijo `u`/`U`, o si no cabe en un entero con
 signo aunque no lo lleve.
+
+**`#include_next <fichero>`** repite la busqueda del fichero, pero empezando en
+el directorio SIGUIENTE a aquel donde aparecio el que la escribe.  Es como una
+cabecera se superpone a otra del mismo nombre sin perderla: la propia se
+encuentra primero, y desde dentro llega a la de debajo para completarla.  Toda
+la biblioteca estandar de C++ se apoya en esto para envolver las cabeceras de C.
+
+```
+// /usr/include/c++/15/math.h
+#include_next <math.h>     // la de C, no esta misma
+```
+
+Requiere saber DONDE aparecio cada fichero, no solo su nombre, asi que la
+busqueda lleva ese dato consigo (`IncludeSearch`, en `pp_include.h`).  De
+propina, un `#include "vecino.h"` escrito dentro de una cabecera hallada por una
+ruta de busqueda se resuelve al lado de ESA cabecera, que es lo correcto.
+
+**Operadores de prueba de caracteristicas.**  `__has_include`, `__has_builtin`,
+`__has_attribute`, `__has_c_attribute`, `__has_cpp_attribute`, `__has_feature`,
+`__has_extension` y `__has_declspec_attribute` se pueden usar en `#if`:
+
+```
+#if __has_include(<optional>)
+#  include <optional>
+#endif
+
+#if __has_builtin(__builtin_expect)
+#  define PROBABLE(x) __builtin_expect(!!(x), 1)
+#else
+#  define PROBABLE(x) (x)
+#endif
+```
+
+`__has_include` lo resuelve vpp por su cuenta, porque es una pregunta sobre el
+sistema de ficheros y ahi no hace falta nadie mas.  Los demas preguntan por
+capacidades DEL COMPILADOR, y vpp no es un compilador: no puede inventarse la
+respuesta sin mentir.  Asi que se la pregunta al compilador objetivo, el que se
+le indique con `--capabilities-from`:
+
+```bash
+vpp --capabilities-from "gcc -E -P -x c" fuente.c
+```
+
+Se le pasa una vez por operador y argumento distintos, y el resultado queda
+cacheado en memoria durante la ejecucion.  Sin `--capabilities-from` no hay a
+quien preguntar: `__has_include` sigue funcionando, y el resto **devuelve 0**,
+que es la respuesta honesta -- "no consta que exista" -- y la que hace que el
+codigo bien escrito tome su rama de reserva en vez de romperse.  Si se sabe la
+respuesta, se puede fijar a mano con `-D__has_builtin(x)=1` o similar.
 
 ---
 
@@ -894,6 +950,9 @@ vpp --predef-from "gcc -dM -E -" archivo.c
 # Precargar directivas desde un fichero (sirve para cualquier lenguaje)
 vpp --predef plataforma.def archivo.txt
 
+# Resolver __has_builtin y companeros preguntandole al compilador objetivo
+vpp --capabilities-from "gcc -E -P -x c" archivo.c
+
 # Definir macros desde la linea de comandos
 vpp -DDEBUG -DVERSION=2 archivo.vel
 
@@ -1358,6 +1417,9 @@ ctest --output-on-failure -V
 ./vpp_test_new_features    ; arrays, exec, macros funcion integradas
 ./vpp_test_variables       ; directiva #set y todos los operadores de asignacion
 ./vpp_test_float_conv      ; macros de flotantes y conversion numerica
+./vpp_test_import          ; #import y rutas de modulos
+./vpp_test_c_api           ; el ABI en C
+./vpp_test_include_search  ; busqueda de inclusiones e #include_next
 ```
 
 ### Integracion continua
@@ -1386,15 +1448,16 @@ pese a tener la visibilidad oculta, y por eso hizo falta el version script.
 
 ### Conformidad con el preprocesador de C
 
-Ademas de los tests unitarios hay dos suites cuyo oraculo es un compilador de
+Ademas de los tests unitarios hay tres suites cuyo oraculo es un compilador de
 verdad.  Existen porque los unitarios comprueban lo que vpp **construyo**, no lo
 que el estandar **exige**, y por eso podian estar en verde mientras
 `#if defined(X)` estaba roto.
 
 | Suite | Que mide |
 | :---- | :------- |
-| `vpp_test_conformance` | 40 casos preprocesados con vpp y con `gcc`/`clang`, comparando las salidas |
-| `vpp_test_system_headers` | Preprocesa un fuente con cabeceras del sistema, **compila** la salida y **ejecuta** el binario |
+| `vpp_test_conformance` | 43 casos preprocesados con vpp y con `gcc`/`clang`, comparando las salidas |
+| `vpp_test_system_headers` | Preprocesa un fuente con cabeceras de C del sistema, **compila** la salida y **ejecuta** el binario |
+| `vpp_test_system_headers_cxx` | Lo mismo con `<string>`, `<vector>`, `<algorithm>` e `<iostream>`: es el unico sitio donde `#include_next` y los operadores de prueba de caracteristicas se ejercitan de verdad |
 
 La comparacion es a nivel de **token**, no de linea: dos salidas con los mismos
 tokens compilan igual, y vpp diverge de gcc en el reparto por lineas a
@@ -1405,9 +1468,9 @@ Los casos que se sepa que fallan van en `tests/conformance/xfail.txt` con la
 explicacion de que falla.  Uno listado que falla no rompe la suite; uno que
 **pasa** se reporta como XPASS y si la rompe, para obligar a sacarlo de la lista
 al arreglar el bug.  Asi el fichero no puede quedarse mintiendo sobre el estado
-real.  Ahora mismo la lista esta vacia: 40/40.
+real.  Ahora mismo la lista esta vacia: 43/43.
 
-Las dos suites se registran solo si hay un compilador de referencia; sin el se
+Las tres se registran solo si hay un compilador de referencia; sin el se
 omiten en vez de dar un rojo que no dice nada del codigo.
 
 ---
@@ -1424,6 +1487,9 @@ omiten en vez de dar un rojo que no dice nada del codigo.
 | `vpp_test_new_features`| #array, #exec, macros cadenas (__STRLEN__ .. __TRIM__), macros numericas (__MIN__ .. __ALIGN__), aritmetica entera (__ADD__ .. __NEG__), bitwise (__AND__ .. __SAR__), comparaciones (__EQ__ .. __GE__), __ARRAY_FIND__, __ARRAY_JOIN__, __QUOTE__, __UNQUOTE__ |
 | `vpp_test_variables`   | #set con =, +=, -=, *=, /=, %=, &=, \|=, ^=, <<=, >>=, ++, -- |
 | `vpp_test_float_conv`  | Macros IEEE 754 (__FADD__ .. __FPI__), conversion (__DEC2HEX__ .. __ZEROEXT__) |
+| `vpp_test_import`      | #import, rutas de modulos y extensiones del dialecto           |
+| `vpp_test_c_api`       | El ABI en C completo: handles, diagnosticos, propiedad de la memoria |
+| `vpp_test_include_search` | Busqueda de inclusiones: precedencia de rutas, vecino relativo, `#include_next` |
 
 ---
 
@@ -1431,53 +1497,69 @@ omiten en vez de dar un rojo que no dice nada del codigo.
 
 ```
 preprocessor/
-├── CMakeLists.txt           construccion principal
-├── README.md                este archivo
-├── include/
-│   └── preprocessor/
-│       ├── pp_token.h       tokens y SourceLocation
-│       ├── pp_lexer.h       lexer
-│       ├── pp_ast.h         nodos del AST
-│       ├── pp_parser.h      parser
-│       ├── pp_macro.h       tabla, arrays y motor de expansion de macros
-│       ├── pp_evaluator.h   evaluador de expresiones #if
-│       ├── pp_diagnostics.h sistema de errores y advertencias
-│       └── preprocessor.h   clase principal
-├── src/
-│   ├── pp_lexer.cpp
-│   ├── pp_parser.cpp
-│   ├── pp_macro.cpp         incluye registro de macros funcion integradas
-│   ├── pp_evaluator.cpp
-│   ├── pp_diagnostics.cpp
-│   ├── preprocessor.cpp     eval_array_def, eval_exec, eval_set
-│   └── main.cpp             punto de entrada del ejecutable vpp
-├── tests/
-│   ├── CMakeLists.txt
-│   ├── test_lexer.cpp
-│   ├── test_macros.cpp
-│   ├── test_conditionals.cpp
-│   ├── test_includes.cpp
-│   ├── test_metaprog.cpp
-│   ├── test_new_features.cpp
-│   ├── test_variables.cpp   tests de #set
-│   └── test_float_conv.cpp  tests de macros IEEE 754 y conversion
-└── examples/
-    ├── 01_hello_macros.vel       macros basicas y expresiones
-    ├── 02_variables.vel          directiva #set con operadores compuestos
-    ├── 03_arrays_foreach.vel     arrays y bucles #foreach
-    ├── 04_string_macros.vel      macros de cadenas __STRLEN__ .. __TRIM__
-    ├── 05_numeric_macros.vel     macros numericas, bits y conversion de bases
-    ├── 06_float_macros.vel       macros IEEE 754 de punto flotante
-    ├── 07_build_system.vel       vpp como sistema de build con #exec
-    ├── 08_metaprogramming.vel       generacion de tablas con #repeat y #foreach
-    ├── 09_conditional_platform.vel  configuracion portable por plataforma
-    ├── 10_full_program.vel          programa completo: interprete de VM compacto
-    ├── 11_quote_unquote.vel         __QUOTE__ y __UNQUOTE__: tokens <-> cadenas
-    ├── 12_array_join.vel            __ARRAY_JOIN__: listas de texto precalculadas
-    ├── 13_assert.vel                #assert: invariantes de compilacion
-    ├── 14_foreach_index.vel         #foreach VAR, IDX: bucle con indice numerico
-    ├── 15_macro_codegen.vel         #macro...#endmacro: macros multilinea
-    └── 16_vesta_stdlib.vel          uso completo de #import <vesta> y sus modulos
++-- CMakeLists.txt           construccion principal
++-- README.md                este archivo
++-- cmake/                   empaquetado, instalador y listas de simbolos exportados
++-- include/
+|   +-- preprocessor/
+|       +-- pp_token.h        tokens y SourceLocation
+|       +-- pp_lexer.h        lexer
+|       +-- pp_ast.h          nodos del AST
+|       +-- pp_parser.h       parser
+|       +-- pp_macro.h        tabla, arrays y motor de expansion de macros
+|       +-- pp_evaluator.h    evaluador de expresiones #if
+|       +-- pp_include.h      busqueda de #include, #include_next e #import
+|       +-- pp_capabilities.h consulta al compilador objetivo para __has_*
+|       +-- pp_diagnostics.h  sistema de errores y advertencias
+|       +-- preprocessor.h    clase principal (API en C++)
+|       +-- vpp_c.h           ABI en C, estable entre compiladores
++-- src/
+|   +-- pp_lexer.cpp
+|   +-- pp_parser.cpp
+|   +-- pp_macro.cpp          incluye registro de macros funcion integradas
+|   +-- pp_evaluator.cpp
+|   +-- pp_include.cpp
+|   +-- pp_capabilities.cpp
+|   +-- pp_diagnostics.cpp
+|   +-- preprocessor.cpp      eval_array_def, eval_exec, eval_set
+|   +-- vpp_c.cpp             implementacion del ABI en C
+|   +-- main.cpp              punto de entrada del ejecutable vpp
++-- tests/
+|   +-- CMakeLists.txt
+|   +-- test_lexer.cpp
+|   +-- test_macros.cpp
+|   +-- test_conditionals.cpp
+|   +-- test_includes.cpp
+|   +-- test_metaprog.cpp
+|   +-- test_new_features.cpp
+|   +-- test_variables.cpp        tests de #set
+|   +-- test_float_conv.cpp       tests de macros IEEE 754 y conversion
+|   +-- test_import.cpp           tests de #import
+|   +-- test_c_api.cpp            tests del ABI en C
+|   +-- test_include_search.cpp   tests de la busqueda de inclusiones
+|   +-- check_exports.cmake       la biblioteca compartida solo exporta vpp_*
+|   +-- conformance/              suites contra un compilador de verdad
+|       +-- cases/                corpus de casos del estandar de C
+|       +-- xfail.txt             fallos conocidos (vacio)
+|       +-- run_conformance.cmake
+|       +-- run_system_headers.cmake
++-- examples/
+    +-- 01_hello_macros.vel       macros basicas y expresiones
+    +-- 02_variables.vel          directiva #set con operadores compuestos
+    +-- 03_arrays_foreach.vel     arrays y bucles #foreach
+    +-- 04_string_macros.vel      macros de cadenas __STRLEN__ .. __TRIM__
+    +-- 05_numeric_macros.vel     macros numericas, bits y conversion de bases
+    +-- 06_float_macros.vel       macros IEEE 754 de punto flotante
+    +-- 07_build_system.vel       vpp como sistema de build con #exec
+    +-- 08_metaprogramming.vel       generacion de tablas con #repeat y #foreach
+    +-- 09_conditional_platform.vel  configuracion portable por plataforma
+    +-- 10_full_program.vel          programa completo: interprete de VM compacto
+    +-- 11_quote_unquote.vel         __QUOTE__ y __UNQUOTE__: tokens <-> cadenas
+    +-- 12_array_join.vel            __ARRAY_JOIN__: listas de texto precalculadas
+    +-- 13_assert.vel                #assert: invariantes de compilacion
+    +-- 14_foreach_index.vel         #foreach VAR, IDX: bucle con indice numerico
+    +-- 15_macro_codegen.vel         #macro...#endmacro: macros multilinea
+    +-- 16_vesta_stdlib.vel          uso completo de #import <vesta> y sus modulos
 ```
 
 ---

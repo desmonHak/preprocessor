@@ -101,6 +101,7 @@ set(VPP_SOURCES
     src/pp_macro.cpp
     src/pp_evaluator.cpp
     src/pp_capabilities.cpp
+    src/pp_include.cpp
     src/preprocessor.cpp
 )
 

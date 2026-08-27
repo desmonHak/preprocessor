@@ -159,6 +159,17 @@ struct IncludeNode : ASTNode {
     bool        is_import;   ///< true si es #import (semantica auto-once + import_paths)
 
     /**
+     * @brief true si es `#include_next`.
+     *
+     * Reanuda la busqueda DESPUES del directorio en el que aparecio el fichero
+     * que la escribe, en vez de empezar por el principio.  Es como una
+     * biblioteca superpone su propia cabecera sobre la del sistema con el mismo
+     * nombre: libstdc++ hace justo eso para envolver el <stdlib.h> de C desde
+     * su <cstdlib>.
+     */
+    bool        is_next = false;
+
+    /**
      * @brief Tokens de la ruta cuando hay que expandir macros para conocerla.
      *
      * `#include CABECERA` es valido en C: los tokens que siguen se expanden y

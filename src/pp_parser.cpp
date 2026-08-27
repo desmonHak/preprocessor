@@ -225,6 +225,13 @@ NodePtr PPParser::parse_directive() {
     if (dir_name == "define")     return parse_define(hash_loc);
     if (dir_name == "undef")      return parse_undef(hash_loc);
     if (dir_name == "include")    return parse_include(hash_loc);
+    // Misma sintaxis que #include; solo cambia por donde empieza a buscar, y
+    // eso se decide al evaluar.
+    if (dir_name == "include_next") {
+        NodePtr n = parse_include(hash_loc);
+        if (n) static_cast<IncludeNode&>(*n).is_next = true;
+        return n;
+    }
     if (dir_name == "if")         return parse_if_block(hash_loc, IfBlockNode::Kind::IF);
     if (dir_name == "ifdef")      return parse_if_block(hash_loc, IfBlockNode::Kind::IFDEF);
     if (dir_name == "ifndef")     return parse_if_block(hash_loc, IfBlockNode::Kind::IFNDEF);
@@ -885,7 +892,7 @@ NodePtr PPParser::parse_macro(SourceLocation hash_loc) {
     std::string name = cur().value;
     consume();
 
-    // parsear parametros — igual que en parse_define (LPAREN inmediatamente tras el nombre)
+    // parsear parametros -- igual que en parse_define (LPAREN inmediatamente tras el nombre)
     std::vector<std::string> params;
     bool is_variadic = false;
 

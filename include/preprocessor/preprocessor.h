@@ -10,6 +10,7 @@
 #include "pp_ast.h"
 #include "pp_lexer.h"
 #include "pp_capabilities.h"
+#include "pp_include.h"
 #include <string>
 #include <vector>
 #include <unordered_set>
@@ -215,7 +216,24 @@ private:
     MacroTable         m_macros;        ///< Tabla de macros activa
     IncludeResolver    m_resolver;      ///< Resolvedor de includes
     std::unordered_set<std::string> m_include_guard_once; ///< Archivos con #pragma once
-    std::vector<std::string>        m_include_stack;      ///< Pila de archivos en proceso
+
+    /**
+     * @brief Un fichero de inclusion en curso.
+     *
+     * Guarda la ruta RESUELTA y no la que se escribio en la directiva.  Son
+     * cosas distintas y confundirlas rompe dos casos: un `#include "vecino.h"`
+     * dentro de una cabecera que aparecio por una ruta de busqueda tiene que
+     * buscar al lado de ELLA, y un `#include_next` necesita saber en que
+     * directorio de la lista aparecio la actual para reanudar en el siguiente.
+     */
+    struct IncludeFrame {
+        std::string path;             ///< Ruta con la que se abrio
+        int         search_index = -1; ///< Directorio de la lista donde aparecio,
+                                       ///< o -1 si fue relativo al que incluye
+    };
+
+    std::vector<IncludeFrame>       m_include_stack;      ///< Ficheros en curso
+    IncludeSearch                   m_search;             ///< Busqueda de ficheros
     /**
      * @brief TODOS los ficheros incluidos, no solo los que estan en curso.
      *
@@ -386,7 +404,7 @@ private:
      * @param node IncludeNode con la ruta a resolver.
      * @return Contenido del archivo, o cadena vacia si no se encontro.
      */
-    std::string resolve_include(const IncludeNode& node);
+    ResolvedInclude resolve_include(const IncludeNode& node);
 
 };
 

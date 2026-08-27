@@ -31,6 +31,7 @@ add_vpp_test(vpp_test_variables    test_variables.cpp)
 add_vpp_test(vpp_test_float_conv   test_float_conv.cpp)
 add_vpp_test(vpp_test_import       test_import.cpp)
 add_vpp_test(vpp_test_c_api        test_c_api.cpp)
+add_vpp_test(vpp_test_include_search test_include_search.cpp)
 
 # --- suite de conformidad con el preprocesador de C -------------------------
 #
@@ -65,6 +66,25 @@ if(VPP_REF_CC AND TARGET vpp)
             -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/sys_headers
             -P ${CMAKE_CURRENT_SOURCE_DIR}/conformance/run_system_headers.cmake)
     set_tests_properties(vpp_test_system_headers PROPERTIES TIMEOUT 180)
+
+    # La misma prueba en C++.  No es redundante: las cabeceras de libstdc++
+    # exigen cosas que las de C no tocan -- los operadores de prueba de
+    # caracteristicas y #include_next para superponerse a las de C -- asi que es
+    # el unico sitio donde esos dos caminos se ejercitan de verdad.
+    find_program(VPP_REF_CXX NAMES g++ clang++ c++)
+    if(VPP_REF_CXX)
+        add_test(NAME vpp_test_system_headers_cxx
+            COMMAND ${CMAKE_COMMAND}
+                -DVPP=$<TARGET_FILE:vpp>
+                -DCC=${VPP_REF_CXX}
+                -DLANG=c++
+                -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/sys_headers_cxx
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/conformance/run_system_headers.cmake)
+        set_tests_properties(vpp_test_system_headers_cxx PROPERTIES TIMEOUT 300)
+        message(STATUS "  Cabeceras C++ : ${VPP_REF_CXX}")
+    else()
+        message(STATUS "  Cabeceras C++ : sin compilador de C++; test omitido")
+    endif()
     message(STATUS "  Conformidad   : ${VPP_REF_CC}")
 else()
     message(STATUS "  Conformidad   : sin compilador de referencia; test omitido")
@@ -99,5 +119,6 @@ add_custom_target(vpp_run_tests
         vpp_test_float_conv
         vpp_test_import
         vpp_test_c_api
+        vpp_test_include_search
     COMMENT "Ejecutando todos los tests del preprocesador vpp"
 )

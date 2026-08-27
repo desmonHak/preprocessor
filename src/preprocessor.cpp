@@ -89,16 +89,14 @@ int64_t Preprocessor::resolve_capability(const std::string& op,
         }
         if (ruta.empty()) return 0;
 
-        // Se busca EN SILENCIO: que el fichero no exista es la respuesta que se
-        // esta pidiendo, no un error que reportar.
-        Preprocessor sonda(DiagCallback([](const Diagnostic&) {}));
-        sonda.m_opts = m_opts;
-        IncludeNode consulta(
-            SourceLocation(m_include_stack.empty() ? std::string()
-                                                   : m_include_stack.back(),
-                           0, 0),
-            ruta, sistema, false);
-        return sonda.resolve_include(consulta).empty() ? 0 : 1;
+        // Se pregunta directamente al buscador, sin pasar por el preprocesador:
+        // que el fichero no exista es la RESPUESTA que se esta pidiendo, no un
+        // error, y por esta via no se emite ningun diagnostico.
+        const std::string desde = m_include_stack.empty()
+                                    ? std::string()
+                                    : m_include_stack.back().path;
+        IncludeSearch buscador(m_opts.include_paths, m_opts.import_paths);
+        return buscador.resolve(ruta, sistema, desde).found ? 1 : 0;
     }
 
     // El resto pregunta por el compilador, y de eso se encarga el oraculo.
@@ -290,7 +288,7 @@ void Preprocessor::eval_node(const ASTNode& node, std::string& output) {
                 // usar la pila de includes para identificar el archivo actual con certeza
                 const std::string& guard_key = m_include_stack.empty()
                     ? n.loc.file
-                    : m_include_stack.back();
+                    : m_include_stack.back().path;
                 m_include_guard_once.insert(guard_key);
             }
             // pragmas desconocidos se ignoran silenciosamente
@@ -441,8 +439,10 @@ void Preprocessor::eval_include(const IncludeNode& node, std::string& output) {
     // Se construye un nodo con la ruta ya resuelta: resolve_include lee de el,
     // y la ruta puede venir de expandir macros y no del texto original.
     IncludeNode resuelto(node.loc, ruta, es_sistema, node.is_import);
-    std::string content = resolve_include(resuelto);
-    if (content.empty() && m_diag.has_errors()) return;
+    resuelto.is_next = node.is_next;
+    const ResolvedInclude hallado = resolve_include(resuelto);
+    if (!hallado.found) return;
+    const std::string& content = hallado.content;
 
     if (m_opts.emit_line_markers) {
         output += "#line 1 \"";
@@ -461,14 +461,24 @@ void Preprocessor::eval_include(const IncludeNode& node, std::string& output) {
     // con el motor de diagnosticos compartido
 
     // procesamiento inline del include compartiendo el estado de macros
-    PPLexer lexer(content, ruta, m_diag, m_opts.lexer);
+    // Se lexa con la ruta RESUELTA, no con la escrita: es la que acabara en la
+    // ubicacion de cada token, y de ella cuelgan tanto los mensajes como la
+    // busqueda de un vecino desde este fichero.
+    PPLexer lexer(content, hallado.path.empty() ? ruta : hallado.path,
+                  m_diag, m_opts.lexer);
     auto tokens = lexer.tokenize();
     PPParser parser(std::move(tokens), m_diag);
     auto ast = parser.parse();
     if (!m_diag.has_errors()) {
         const auto* block = static_cast<const BlockNode*>(ast.get());
-        // empujar la ruta del include a la pila para que #pragma once pueda identificar el archivo
-        m_include_stack.push_back(ruta);
+        /* Se apila la ruta RESUELTA junto con el directorio de la lista en el
+         * que aparecio.  Lo primero permite que un `#include "vecino.h"` de
+         * dentro busque al lado de este fichero y no del de partida; lo segundo
+         * es lo que necesita un `#include_next` para reanudar en el siguiente
+         * directorio en vez de volver a encontrarse a si mismo. */
+        m_include_stack.push_back(
+            IncludeFrame{hallado.path.empty() ? ruta : hallado.path,
+                         hallado.search_index});
         /* Y ademas se APUNTA, que no es lo mismo: la pila se vacia al salir y
          * esto tiene que sobrevivir a todo el preproceso.  Es lo que permite
          * que un cache sepa que este fuente depende de aquel fichero.  Se
@@ -636,60 +646,59 @@ bool Preprocessor::eval_condition(const std::vector<PPToken>& tokens,
     return eval.evaluate(tokens, loc) != 0;
 }
 
-std::string Preprocessor::resolve_include(const IncludeNode& node) {
-    // helper: leer un archivo dado su ruta absoluta o relativa como std::string
-    auto read_file = [](const std::filesystem::path& p) -> std::string {
-        std::ifstream ifs(p, std::ios::binary);
-        if (!ifs) return "";
-        return std::string((std::istreambuf_iterator<char>(ifs)),
-                            std::istreambuf_iterator<char>());
-    };
+ResolvedInclude Preprocessor::resolve_include(const IncludeNode& node) {
+    ResolvedInclude r;
 
     // si hay un resolvedor personalizado, usarlo primero
     if (m_resolver) {
         std::string content = m_resolver(node.loc.file, node.path, node.is_system);
-        if (!content.empty()) return content;
+        if (!content.empty()) {
+            // Lo que sirve un resolvedor del usuario no tiene por que existir en
+            // el disco, asi que no hay directorio del que colgar un vecino ni
+            // indice de busqueda que reanudar.
+            r.found   = true;
+            r.content = std::move(content);
+            r.path    = node.path;
+            return r;
+        }
         // si el resolvedor falla para #import, continuar con la busqueda por defecto
         if (!node.is_import) {
             m_diag.error(node.loc, "archivo incluido no encontrado: " + node.path);
-            return "";
+            return r;
         }
     }
 
-    // para #import: buscar primero en import_paths con extensiones .vph, .vel, sin extension
+    // La busqueda en si vive en IncludeSearch; aqui solo se decide QUE pedirle
+    // y que hacer si no aparece.
+    m_search = IncludeSearch(m_opts.include_paths, m_opts.import_paths);
+
     if (node.is_import) {
-        static const char* kImportExts[] = { ".vph", ".vel", "" };
-        for (const auto& imp_dir : m_opts.import_paths) {
-            std::filesystem::path base_imp = std::filesystem::path(imp_dir) / node.path;
-            for (const char* ext : kImportExts) {
-                std::filesystem::path candidate = base_imp;
-                if (ext[0] != '\0') candidate += ext;  // agrega la extension
-                std::string content = read_file(candidate);
-                if (!content.empty()) return content;
-            }
+        r = m_search.resolve_import(node.path);
+        if (!r.found) {
+            // no fatal: el modulo puede no existir todavia
+            m_diag.error(node.loc, "#import: modulo no encontrado: " + node.path);
         }
-        // #import no encontrado: error no fatal (el modulo puede no existir aun)
-        m_diag.error(node.loc, "#import: modulo no encontrado: " + node.path);
-        return "";
+        return r;
     }
 
-    // resolucion estandar para #include:
-    // primero intentar relativo al archivo actual si es include local
-    if (!node.is_system && !node.loc.file.empty()) {
-        std::filesystem::path base = std::filesystem::path(node.loc.file).parent_path();
-        std::string content = read_file(base / node.path);
-        if (!content.empty()) return content;
+    // El fichero desde el que se busca es el que esta en curso, con su ruta
+    // RESUELTA.  La que trae el nodo es la que se escribio en la directiva, y
+    // el vecino de una cabecera esta al lado de donde ESA cabecera aparecio.
+    const std::string desde = m_include_stack.empty() ? node.loc.file
+                                                      : m_include_stack.back().path;
+
+    // Un #include_next reanuda justo despues del directorio en el que aparecio
+    // el fichero actual; un #include normal empieza por el principio.
+    int inicio = 0;
+    if (node.is_next && !m_include_stack.empty()) {
+        inicio = m_include_stack.back().search_index + 1;
     }
 
-    // buscar en las rutas de inclusion configuradas
-    for (const auto& inc_path : m_opts.include_paths) {
-        std::string content = read_file(std::filesystem::path(inc_path) / node.path);
-        if (!content.empty()) return content;
+    r = m_search.resolve(node.path, node.is_system, desde, inicio);
+    if (!r.found) {
+        m_diag.error(node.loc, "archivo incluido no encontrado: " + node.path);
     }
-
-    // no encontrado: emitir error
-    m_diag.error(node.loc, "archivo incluido no encontrado: " + node.path);
-    return "";
+    return r;
 }
 
 void Preprocessor::eval_array_def(const ArrayDefNode& node) {
