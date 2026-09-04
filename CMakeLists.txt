@@ -44,31 +44,48 @@ endif()
 # programa distinto del que se ejecuta, que es justo el error que esto evita.
 #
 #   cmake -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Profile -B cmake-build-profile
-if(NOT MSVC)
-    set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE} -O2 -g -fno-omit-frame-pointer"
-        CACHE STRING "Flags C++ para perfilar (Release + simbolos)" FORCE)
-    set(CMAKE_C_FLAGS_PROFILE "${CMAKE_C_FLAGS_RELEASE} -O2 -g -fno-omit-frame-pointer"
-        CACHE STRING "Flags C para perfilar (Release + simbolos)" FORCE)
-else()
-    set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Zi"
-        CACHE STRING "Flags C++ para perfilar (Release + simbolos)" FORCE)
-    set(CMAKE_C_FLAGS_PROFILE "${CMAKE_C_FLAGS_RELEASE} /O2 /Zi"
-        CACHE STRING "Flags C para perfilar (Release + simbolos)" FORCE)
+#
+# SOLO cuando este es el proyecto PRINCIPAL.  Estos son flags GLOBALES, y como
+# el preprocesador se anade como subdirectorio de VestaVM y se procesa DESPUES
+# de la raiz, con `FORCE` machacaba lo que la raiz acababa de fijar: el binario
+# de perfilado del proyecto entero salia a -O2 mientras el que se entrega va a
+# -O3.  O sea que se perfilaba un programa distinto del que se ejecuta -- que
+# es justo lo que este bloque dice, tres lineas mas arriba, que existe para
+# evitar --, y encima en silencio.
+#
+# Mordio de verdad (2026-09-03): un perfil de VTune atribuia el 27% del
+# interprete al calculo de banderas, con `AddOp::flags` y `SubOp::flags` como
+# simbolos propios.  A -O3 esas funciones se meten en linea y GCC fusiona las
+# escrituras, asi que ese 27% describia al binario de -O2 y a ningun otro.
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    if(NOT MSVC)
+        set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE} -g -fno-omit-frame-pointer"
+            CACHE STRING "Flags C++ para perfilar (Release + simbolos)" FORCE)
+        set(CMAKE_C_FLAGS_PROFILE "${CMAKE_C_FLAGS_RELEASE} -g -fno-omit-frame-pointer"
+            CACHE STRING "Flags C para perfilar (Release + simbolos)" FORCE)
+    else()
+        set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE} /Zi"
+            CACHE STRING "Flags C++ para perfilar (Release + simbolos)" FORCE)
+        set(CMAKE_C_FLAGS_PROFILE "${CMAKE_C_FLAGS_RELEASE} /Zi"
+            CACHE STRING "Flags C para perfilar (Release + simbolos)" FORCE)
+    endif()
 endif()
 
 # Se enlaza como Release SALVO el estripado: `--strip-all` borra justo lo que
 # hace falta para atribuir cada muestra a una funcion.  En MSVC hay que pedir
 # los .pdb explicitamente, que es lo que lee el perfilador.
-if(NOT MSVC)
-    set(CMAKE_EXE_LINKER_FLAGS_PROFILE "${CMAKE_EXE_LINKER_FLAGS_RELEASE}"
-        CACHE STRING "Flags de enlazado para perfilar" FORCE)
-    set(CMAKE_SHARED_LINKER_FLAGS_PROFILE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE}"
-        CACHE STRING "Flags de enlazado dinamico para perfilar" FORCE)
-else()
-    set(CMAKE_EXE_LINKER_FLAGS_PROFILE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /DEBUG"
-        CACHE STRING "Flags de enlazado para perfilar" FORCE)
-    set(CMAKE_SHARED_LINKER_FLAGS_PROFILE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /DEBUG"
-        CACHE STRING "Flags de enlazado dinamico para perfilar" FORCE)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    if(NOT MSVC)
+        set(CMAKE_EXE_LINKER_FLAGS_PROFILE "${CMAKE_EXE_LINKER_FLAGS_RELEASE}"
+            CACHE STRING "Flags de enlazado para perfilar" FORCE)
+        set(CMAKE_SHARED_LINKER_FLAGS_PROFILE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE}"
+            CACHE STRING "Flags de enlazado dinamico para perfilar" FORCE)
+    else()
+        set(CMAKE_EXE_LINKER_FLAGS_PROFILE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /DEBUG"
+            CACHE STRING "Flags de enlazado para perfilar" FORCE)
+        set(CMAKE_SHARED_LINKER_FLAGS_PROFILE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /DEBUG"
+            CACHE STRING "Flags de enlazado dinamico para perfilar" FORCE)
+    endif()
 endif()
 
 if(CMAKE_CONFIGURATION_TYPES)
