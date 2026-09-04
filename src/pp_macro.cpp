@@ -202,16 +202,81 @@ bool MacroTable::is_defined(const std::string& name) const {
     return m_table.count(name) > 0;
 }
 
+namespace {
+
+/// Puede este caracter empezar un identificador?
+inline bool ident_start(unsigned char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+}
+
+/// Puede este caracter continuar un identificador?
+inline bool ident_part(unsigned char c) {
+    return ident_start(c) || (c >= '0' && c <= '9');
+}
+
+/// Es @p s un identificador entero?  Un nombre que no lo sea no lo encontraria
+/// el barrido por palabras, asi que hay que buscarlo aparte.
+bool is_plain_identifier(const std::string& s) {
+    if (s.empty() || !ident_start(static_cast<unsigned char>(s[0])))
+        return false;
+    for (size_t i = 1; i < s.size(); ++i)
+        if (!ident_part(static_cast<unsigned char>(s[i]))) return false;
+    return true;
+}
+
+} // namespace
+
 bool MacroTable::any_name_appears_in(const std::string& text) const {
     // Los TRES sitios donde puede haber un nombre.  Que esten separados es
     // justo por lo que esta pregunta vive aqui: quien la hiciera desde fuera
     // tendria que acordarse de los tres.
-    for (const auto& kv : m_table)
-        if (text.find(kv.first) != std::string::npos) return true;
-    for (const auto& kv : m_arrays)
-        if (text.find(kv.first) != std::string::npos) return true;
-    for (const auto& kv : m_builtin_fns)
-        if (text.find(kv.first) != std::string::npos) return true;
+    if (m_table.empty() && m_arrays.empty() && m_builtin_fns.empty())
+        return false;
+
+    /* Lo raro primero: un nombre que no sea un identificador entero no
+     * aparecera en el barrido por palabras de abajo, asi que ese si hay que
+     * buscarlo por su cuenta.  Con las macros normales no pasa -- un `#define`
+     * nombra un identificador -- pero preferimos comprobarlo a suponerlo: un
+     * fallo aqui no daria un error, dejaria sin expandir. */
+    const auto scan_odd = [&text](const auto& tabla) {
+        for (const auto& kv : tabla)
+            if (!is_plain_identifier(kv.first) &&
+                text.find(kv.first) != std::string::npos)
+                return true;
+        return false;
+    };
+    if (scan_odd(m_table) || scan_odd(m_arrays) || scan_odd(m_builtin_fns))
+        return true;
+
+    /* Y el caso normal: UN barrido del texto, no uno por macro.
+     *
+     * Al reves -- un `find` de cada nombre sobre el fuente entero -- son N
+     * pasadas de cientos de kilobytes, y con unas decenas de macros definidas
+     * eso pesa mas que todo lo que este atajo ahorra.  Asi es una pasada y una
+     * consulta por palabra.
+     *
+     * Ademas es mas PRECISO: compara palabras enteras, asi que un nombre que
+     * solo aparecia dentro de otra palabra ya no cuenta, y ese fichero se
+     * queda en el camino rapido. */
+    std::string word;
+    size_t i = 0;
+    while (i < text.size()) {
+        if (!ident_start(static_cast<unsigned char>(text[i]))) {
+            ++i;
+            continue;
+        }
+        size_t j = i + 1;
+        while (j < text.size() &&
+               ident_part(static_cast<unsigned char>(text[j])))
+            ++j;
+        // `assign` reutiliza la memoria que ya tenga: tras las primeras
+        // palabras deja de reservar.
+        word.assign(text, i, j - i);
+        if (m_table.count(word) != 0 || m_arrays.count(word) != 0 ||
+            m_builtin_fns.count(word) != 0)
+            return true;
+        i = j;
+    }
     return false;
 }
 
