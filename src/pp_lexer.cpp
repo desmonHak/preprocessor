@@ -182,6 +182,56 @@ std::vector<PPToken> PPLexer::tokenize() {
     return result;
 }
 
+bool PPLexer::strip_only(std::string& out) {
+    out.reserve(m_src.size());
+
+    while (!at_end()) {
+        // Continuacion de linea: igual que en `tokenize`, se traga las dos y no
+        // deja nada.  Va la PRIMERA por lo mismo que alli.
+        if (peek() == '\\' && peek(1) == '\n') {
+            advance();
+            advance();
+            continue;
+        }
+
+        // Una directiva y se acabo: aqui no se sabe expandir nada.
+        if (is_directive_start()) return false;
+
+        /* El de BLOQUE antes que el de linea, como en `scan_text_line`: hay
+         * dialectos donde uno es prefijo del otro. */
+        if (m_opts.strip_block_comments &&
+            matches_ahead(m_opts.block_comment_open)) {
+            const size_t saltos = skip_block_comment();
+            /* Las lineas que ocupaba se reponen VACIAS.  El texto sobra, su
+             * sitio no: sin esto todo lo de abajo se corre hacia arriba y
+             * cualquier mensaje que cite una linea cita la equivocada. */
+            for (size_t k = 0; k < saltos; ++k) out += '\n';
+            continue;
+        }
+        if (m_opts.strip_line_comments &&
+            matches_ahead(m_opts.line_comment)) {
+            skip_line_comment();
+            continue;
+        }
+
+        /* Dentro de una cadena no hay comentarios.  Se reconoce con el mismo
+         * escaner que usa el camino normal -- y se copia su texto tal cual --
+         * en vez de con una regla propia, que es como se acaba tratando un
+         * `//` de dentro de un literal como si abriera un comentario. */
+        if (m_opts.strings && peek() == '"') {
+            out += scan_string('"').value;
+            continue;
+        }
+        if (m_opts.char_literals && peek() == '\'') {
+            out += scan_string('\'').value;
+            continue;
+        }
+
+        out += advance();
+    }
+    return true;
+}
+
 /* --- escaner de linea de directiva ---------------------------------------- */
 
 void PPLexer::scan_directive_line(std::vector<PPToken>& out) {

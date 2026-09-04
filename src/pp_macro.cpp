@@ -202,6 +202,19 @@ bool MacroTable::is_defined(const std::string& name) const {
     return m_table.count(name) > 0;
 }
 
+bool MacroTable::any_name_appears_in(const std::string& text) const {
+    // Los TRES sitios donde puede haber un nombre.  Que esten separados es
+    // justo por lo que esta pregunta vive aqui: quien la hiciera desde fuera
+    // tendria que acordarse de los tres.
+    for (const auto& kv : m_table)
+        if (text.find(kv.first) != std::string::npos) return true;
+    for (const auto& kv : m_arrays)
+        if (text.find(kv.first) != std::string::npos) return true;
+    for (const auto& kv : m_builtin_fns)
+        if (text.find(kv.first) != std::string::npos) return true;
+    return false;
+}
+
 const MacroDef* MacroTable::get(const std::string& name) const {
     auto it = m_table.find(name);
     if (it == m_table.end()) return nullptr;

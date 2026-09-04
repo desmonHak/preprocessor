@@ -79,6 +79,25 @@ struct PPOptions {
     std::vector<std::string> predefines;    ///< Macros a predefinir (formato "NAME" o "NAME=val")
 
     /**
+     * @brief Si no hay nada que expandir, devolver el fuente TAL CUAL.
+     *
+     * Un fichero sin directivas y sin ningun nombre definido dentro no puede
+     * cambiar mas que en una cosa: pierde los comentarios.  Quien ya sabe
+     * saltarselos por su cuenta -- el lexer de Vesta lo hace, con su propio
+     * diagnostico de bloque sin cerrar -- no necesita que se los quiten aqui, y
+     * entonces no hay NADA que hacer con el fichero.
+     *
+     * Ademas de mas rapido es mas FIEL: quitar un comentario mueve las columnas
+     * de lo que venia detras, asi que lo que el compilador ve deja de estar
+     * donde esta en el fichero de verdad.
+     *
+     * Por defecto NO, que es lo que un preprocesador debe hacer: los
+     * comentarios se quitan.  Lo enciende quien sabe que su consumidor los
+     * tolera.
+     */
+    bool passthrough_if_nothing_to_expand = false;
+
+    /**
      * @brief Macros a quitar antes de procesar.
      *
      * Se aplican DESPUES de `predefines` y de los conjuntos precargados, que es

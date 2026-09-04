@@ -121,6 +121,27 @@ public:
      */
     std::vector<PPToken> tokenize();
 
+    /**
+     * @brief El fuente sin comentarios, SIN tokenizar, para cuando no hay nada
+     *        que expandir.
+     *
+     * Un fichero sin directivas y sin ningun nombre de macro dentro no puede
+     * cambiar mas que en una cosa: pierde los comentarios.  Tokenizarlo es
+     * partirlo en un token por identificador, numero, cadena, hueco y
+     * parentesis -- cada uno con su cadena propia, y el analizador los copia
+     * otra vez -- para volver a pegarlo tal cual.
+     *
+     * Usa las MISMAS primitivas que @c tokenize (que abre un comentario, que
+     * abre una cadena, que empieza una directiva), que salen de las opciones y
+     * por tanto del dialecto.  No es otra idea de que es un comentario: es otro
+     * consumidor de la misma.
+     *
+     * @param out Recibe el texto resultante.
+     * @return @c true si se pudo; @c false en cuanto aparece una directiva, en
+     *         cuyo caso @p out no sirve y hay que tokenizar de verdad.
+     */
+    bool strip_only(std::string& out);
+
 private:
     std::string       m_src;    ///< Texto fuente completo
     /**

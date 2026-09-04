@@ -109,6 +109,25 @@ public:
     bool is_defined(const std::string& name) const;
 
     /**
+     * @brief Puede alguno de los nombres definidos aparecer en @p text?
+     *
+     * Responde la tabla, y no quien pregunta recorriendo sus mapas, porque la
+     * lista de lo que hay definido es SUYA: macros normales, arrays y macros
+     * funcion del sistema estan en tres sitios distintos, y olvidarse de uno no
+     * daria un error -- daria una expansion que no se hizo.
+     *
+     * Es una respuesta CONSERVADORA a proposito: busca el nombre como subcadena,
+     * asi que puede decir que si cuando solo aparecia dentro de otra palabra.
+     * Quien la usa decide con ella si puede saltarse la expansion, y ahi un
+     * falso "si" solo cuesta tomar el camino largo; un falso "no" se saltaria
+     * una expansion de verdad.
+     *
+     * @param text Texto donde buscar.
+     * @return true si algun nombre definido aparece, o si no se puede afirmar.
+     */
+    bool any_name_appears_in(const std::string& text) const;
+
+    /**
      * @brief Obtiene la definicion de una macro.
      * @param name Nombre de la macro.
      * @return Puntero constante a MacroDef, o nullptr si no existe.

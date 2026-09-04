@@ -358,6 +358,36 @@ std::string Preprocessor::process(const std::string& source,
     apply_dialect_line(source, lex_opts, filename, m_diag);
 
     m_sources.add(filename, source);
+
+    /* CAMINO RAPIDO: nada que expandir.
+     *
+     * Un fichero sin directivas y en el que no aparece ningun nombre definido
+     * no puede cambiar mas que en una cosa -- pierde los comentarios --, asi
+     * que se hace eso y ya.  El camino normal lo parte en un token por
+     * identificador, numero, cadena, hueco y parentesis, cada uno con su cadena
+     * propia, el analizador los copia OTRA VEZ al arbol, y todo para volver a
+     * pegarlo igual.
+     *
+     * No es un caso raro: de los 545 ejemplos del corpus, NINGUNO usa una sola
+     * directiva.
+     *
+     * El orden importa.  Primero se barre -- que es una pasada y se corta en
+     * cuanto ve una directiva --, y solo si eso sale bien se pregunta por los
+     * nombres, que cuesta una busqueda por macro definida. */
+    {
+        std::string stripped;
+        PPLexer probe(source, filename, m_diag, lex_opts);
+        if (probe.strip_only(stripped) &&
+            !m_macros.any_name_appears_in(source)) {
+            /* Y si quien pregunta se sabe saltar los comentarios, ni eso: el
+             * fuente entero tal cual.  Ver `passthrough_if_nothing_to_expand`;
+             * ademas de ahorrarse construir la salida, deja las columnas donde
+             * estan en el fichero de verdad. */
+            if (m_opts.passthrough_if_nothing_to_expand) return source;
+            return stripped;
+        }
+    }
+
     PPLexer lexer(source, filename, m_diag, lex_opts);
     auto tokens = lexer.tokenize();
 
